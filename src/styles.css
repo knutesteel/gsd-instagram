@@ -13,6 +13,12 @@ body {
   min-width: 320px;
   background: #f7f4ed;
 }
+.auth-page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at top left, #e7e2ca, #f7f4ed 45%, #eee8dd); }
+.auth-card { width: min(440px, 100%); background: #fffdf9; border: 1px solid #ded8ca; border-radius: 18px; padding: 38px; box-shadow: 0 18px 55px rgba(43, 45, 34, .12); }
+.auth-card h1 { font-family: "Playfair Display", serif; font-size: 38px; margin: 42px 0 8px; letter-spacing: -1.5px; }
+.auth-card > p { color: #65635d; line-height: 1.55; margin-bottom: 28px; }
+.auth-card .field { margin: 18px 0; }
+.auth-message { color: #52612e !important; margin: 18px 0 0 !important; }
 button,
 input,
 textarea,
