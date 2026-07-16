@@ -255,11 +255,22 @@ function AuthGate() {
     setSending(false);
     setMessage(error ? error.message : "Check your inbox for a secure sign-in link.");
   };
+  const signInWithGoogle = async () => {
+    if (!supabase) return;
+    setSending(true);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) { setSending(false); setMessage(error.message); }
+  };
   return <main className="auth-page"><form className="auth-card" onSubmit={sendLink}>
     <div className="brand"><span>GSD</span><em>Instagram</em></div>
     <h1>Your story desk</h1><p>Sign in to save research, concepts, and assets privately to your workspace.</p>
     <label className="field"><b>Email address</b><input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
     <button className="button primary wide" disabled={sending}>{sending ? "Sending…" : "Email me a sign-in link"}</button>
+    <div className="auth-divider"><span>or</span></div>
+    <button type="button" className="button wide google-button" disabled={sending} onClick={() => void signInWithGoogle()}><span className="google-mark">G</span> Continue with Google</button>
     {message && <p className="auth-message">{message}</p>}
   </form></main>;
 }
