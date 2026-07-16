@@ -250,15 +250,17 @@ function AuthGate() {
   </form></main>;
 }
 
-type PromptDocument = { id: string; kind: "icp" | "voice_guide"; file_name: string; created_at: string };
+type PromptDocument = { id: string; kind: "icp" | "voice_guide"; file_name: string; created_at: string; text_content?: string | null };
 function Guidance() {
   const [documents, setDocuments] = useState<PromptDocument[]>([]);
   const [uploading, setUploading] = useState<"icp" | "voice_guide" | null>(null);
   const [message, setMessage] = useState("");
+  const [voiceText, setVoiceText] = useState("");
+  const [savingVoice, setSavingVoice] = useState(false);
   const loadDocuments = async () => {
     if (!supabase) return;
-    const { data, error } = await supabase.from("prompt_documents").select("id,kind,file_name,created_at").eq("is_active", true).order("created_at", { ascending: false });
-    if (error) setMessage(error.message); else setDocuments((data ?? []) as PromptDocument[]);
+    const { data, error } = await supabase.from("prompt_documents").select("id,kind,file_name,created_at,text_content").eq("is_active", true).order("created_at", { ascending: false });
+    if (error) setMessage(error.message); else { const saved = (data ?? []) as PromptDocument[]; setDocuments(saved); setVoiceText(saved.find((doc) => doc.kind === "voice_guide")?.text_content ?? ""); }
   };
   useEffect(() => { void loadDocuments(); }, []);
   const upload = async (kind: "icp" | "voice_guide", file?: File) => {
@@ -272,13 +274,15 @@ function Guidance() {
     const path = `${user.id}/${kind}/${crypto.randomUUID()}-${safeName}`;
     const { error: storageError } = await supabase.storage.from("prompt-documents").upload(path, file, { contentType: file.type || "application/octet-stream" });
     if (storageError) { setUploading(null); return setMessage(storageError.message); }
-    const { error: dbError } = await supabase.from("prompt_documents").insert({ user_id: user.id, kind, file_name: file.name, storage_path: path, mime_type: file.type || null, file_size: file.size });
+    const textContent = kind === "voice_guide" && (file.name.endsWith(".md") || file.type.startsWith("text/")) ? await file.text() : null;
+    const { error: dbError } = await supabase.from("prompt_documents").insert({ user_id: user.id, kind, file_name: file.name, storage_path: path, mime_type: file.type || null, file_size: file.size, text_content: textContent });
     if (dbError) { await supabase.storage.from("prompt-documents").remove([path]); setMessage(dbError.message); } else { setMessage(`${file.name} is ready to guide future prompts.`); await loadDocuments(); }
     setUploading(null);
   };
+  const saveVoice = async () => { if (!supabase) return; setSavingVoice(true); const { data: userData } = await supabase.auth.getUser(); const existing = documents.find((doc) => doc.kind === "voice_guide"); const payload = { text_content: voiceText, file_name: existing?.file_name ?? "GSD Voice.md" }; const { error } = existing ? await supabase.from("prompt_documents").update(payload).eq("id", existing.id) : await supabase.from("prompt_documents").insert({ user_id: userData.user?.id, kind: "voice_guide", storage_path: `${userData.user?.id}/voice_guide/GSD-Voice.md`, mime_type: "text/markdown", file_size: voiceText.length, ...payload }); setSavingVoice(false); setMessage(error ? error.message : "GSD Voice saved and ready for all future prompts."); await loadDocuments(); };
   const card = (kind: "icp" | "voice_guide", title: string, description: string) => {
     const docs = documents.filter((doc) => doc.kind === kind);
-    return <article className="guidance-card"><span className="guidance-icon"><FiBookOpen /></span><h2>{title}</h2><p>{description}</p><label className="button primary wide"><FiUploadCloud /> {uploading === kind ? "Uploading…" : `Upload ${title}`}<input hidden type="file" accept=".pdf,.txt,.doc,.docx,application/pdf,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={Boolean(uploading)} onChange={(e) => { void upload(kind, e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>PDF, DOCX, DOC, or TXT · 10 MB max · private to your workspace</small>{docs.length > 0 ? <div className="document-list">{docs.map((doc) => <div key={doc.id}><FiFileText /> <span>{doc.file_name}</span><FiCheck /></div>)}</div> : <div className="document-empty">No file uploaded yet.</div>}</article>;
+    return <article className="guidance-card"><span className="guidance-icon"><FiBookOpen /></span><h2>{title}</h2><p>{description}</p><label className="button primary wide"><FiUploadCloud /> {uploading === kind ? "Uploading…" : `Upload ${title}`}<input hidden type="file" accept={kind === "voice_guide" ? ".md,.txt,text/markdown,text/plain" : ".pdf,.txt,.doc,.docx,application/pdf,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"} disabled={Boolean(uploading)} onChange={(e) => { void upload(kind, e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>{kind === "voice_guide" ? "Markdown or TXT · editable below" : "PDF, DOCX, DOC, or TXT · 10 MB max"} · private to your workspace</small>{kind === "voice_guide" && <><Field label="Editable GSD Voice"><textarea className="voice-editor" value={voiceText} onChange={(e) => setVoiceText(e.target.value)} placeholder="Upload a .md file or write the GSD Voice here…" /></Field><button className="button wide" onClick={() => void saveVoice()} disabled={savingVoice}>{savingVoice ? "Saving…" : "Save GSD Voice"}</button></>}{docs.length > 0 ? <div className="document-list">{docs.map((doc) => <div key={doc.id}><FiFileText /> <span>{doc.file_name}</span><FiCheck /></div>)}</div> : <div className="document-empty">No file uploaded yet.</div>}</article>;
   };
   return <section><header className="page-header"><div><h1>Prompt guidance</h1><p>Upload the source documents that define who we are talking to and how Hank and the squirrel should sound.</p></div></header><div className="guidance-grid">{card("icp", "ICP", "Your ideal customer profile: priorities, problems, context, and the emotional reality each post should recognize.")}{card("voice_guide", "GSD Voice", "Your tone, language, character rules, and creative guardrails. These will be injected into research and production prompts.")}</div>{message && <p className="guidance-message">{message}</p>}<div className="panel guidance-note"><FiCheck /><div><b>Private by default</b><p>These documents are stored in a private Supabase bucket. Only your signed-in workspace can access them.</p></div></div></section>;
 }
@@ -297,9 +301,12 @@ function Dashboard({
   onDiscard: (id: string) => void;
 }) {
   const [filter, setFilter] = useState("");
-  const shown = items.filter((i) =>
-    i.title.toLowerCase().includes(filter.toLowerCase()),
-  );
+  const [category, setCategory] = useState("all");
+  const [type, setType] = useState("all");
+  const [minimumScore, setMinimumScore] = useState("0");
+  const shown = items.filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore));
+  const categories = [...new Set(items.map((item) => item.category))];
+  const types = [...new Set(items.map((item) => item.type))];
   return (
     <section>
       <header className="page-header">
@@ -325,18 +332,9 @@ function Dashboard({
             placeholder="Search stories"
           />
         </label>
-        <button>
-          All status <FiChevronDown />
-        </button>
-        <button>
-          Category <FiChevronDown />
-        </button>
-        <button>
-          Score <FiChevronDown />
-        </button>
-        <button>
-          Post type <FiChevronDown />
-        </button>
+        <select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+        <select value={minimumScore} onChange={(e) => setMinimumScore(e.target.value)}><option value="0">Any score</option><option value="90">90+</option><option value="75">75+</option><option value="60">60+</option></select>
+        <select value={type} onChange={(e) => setType(e.target.value)}><option value="all">All post types</option>{types.map((value) => <option key={value} value={value}>{value}</option>)}</select>
       </div>
       <div className="story-table">
         <div className="story-head">
@@ -402,11 +400,21 @@ function Discover({
   setSearching: (v: boolean) => void;
   notify: (m: string) => void;
 }) {
+  const [mode, setMode] = useState<"system" | "manual">("system");
+  const [manualUrl, setManualUrl] = useState("");
+  const [searchText, setSearchText] = useState("");
+  const [topicInput, setTopicInput] = useState("");
+  const [topics, setTopics] = useState(["Attention & Brain", "Animal Behavior", "Weird Human News", "Productivity Tips", "Science & Space"]);
+  const [queued, setQueued] = useState<string[]>([]);
+  const addTopic = () => { const value = topicInput.trim(); if (value && !topics.includes(value)) setTopics([...topics, value]); setTopicInput(""); };
   const run = () => {
+    if (mode === "manual" && !/^https?:\/\//i.test(manualUrl.trim())) return notify("Paste a complete article URL, starting with https://.");
+    if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search phrase or at least one topic.");
     setSearching(true);
     window.setTimeout(() => {
       setSearching(false);
-      notify("25 qualified stories added to the queue.");
+      setQueued(mode === "manual" ? ["Checking the submitted article", "Evaluating GSD fit", "Preparing a post concept"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
+      notify(mode === "manual" ? "Article queued for analysis." : "Three research tasks are queued.");
     }, 1500);
   };
   return (
@@ -423,9 +431,10 @@ function Discover({
       <div className="discover-grid">
         <div className="panel search-panel">
           <div className="segmented">
-            <button>Manual URL</button>
-            <button className="selected">System Search</button>
+            <button className={mode === "manual" ? "selected" : ""} onClick={() => setMode("manual")}>Manual URL</button>
+            <button className={mode === "system" ? "selected" : ""} onClick={() => setMode("system")}>System Search</button>
           </div>
+          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : <><Field label="What should we search for?"><input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="e.g. surprising focus research or clever animal behavior" /></Field>
           <label className="field-label">
             Timeframe
             <select defaultValue="48">
@@ -435,22 +444,9 @@ function Discover({
           </label>
           <p className="field-label">Topics</p>
           <div className="chips">
-            <span>
-              Attention &amp; Brain <FiX />
-            </span>
-            <span>
-              Animal Behavior <FiX />
-            </span>
-            <span>
-              Weird Human News <FiX />
-            </span>
-            <span>
-              Productivity Tips <FiX />
-            </span>
-            <span>
-              Science &amp; Space <FiX />
-            </span>
+            {topics.map((topic) => <span key={topic}>{topic} <button aria-label={`Remove ${topic}`} onClick={() => setTopics(topics.filter((item) => item !== topic))}><FiX /></button></span>)}
           </div>
+          <div className="topic-add"><input value={topicInput} onChange={(e) => setTopicInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTopic(); } }} placeholder="Add a topic" /><button onClick={addTopic}><FiPlus /> Add</button></div></>}
           <button className="button primary wide" onClick={run}>
             {searching ? (
               <>
@@ -480,8 +476,8 @@ function Discover({
         </div>
       </div>
       <div className="panel progress">
-        <h2>{searching ? "Preparing 10 searches" : "Ready to research"}</h2>
-        {["Attention & Brain", "Animal Behavior", "Weird Human News"].map(
+        <h2>{searching ? "Preparing research" : queued.length ? "Queued research" : "Ready to research"}</h2>
+        {(queued.length ? queued : ["Attention & Brain", "Animal Behavior", "Weird Human News"]).map(
           (t, i) => (
             <div className="progress-row" key={t}>
               <span className="round">{i + 1}</span>
@@ -493,7 +489,7 @@ function Discover({
                     ? "Unexpected animal problem solving"
                     : "Practical tactics to protect your focus"}
               </p>
-              <small>{searching ? "Searching" : "Queued"}</small>
+              <small>{searching ? "Searching" : queued.length ? "Queued" : "Ready"}</small>
             </div>
           ),
         )}
@@ -574,6 +570,7 @@ function Detail({
           </Field>
           <Field label="Image summary">
             <textarea
+              className="expanded"
               defaultValue={
                 "Location: warm home office\nTime: late afternoon\nHank’s expression: tired but amused\nthe squirrel’s expression: smug and delighted"
               }
@@ -591,6 +588,7 @@ function Detail({
           </Field>
           <Field label="Caption">
             <textarea
+              className="caption-editor"
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
             />
@@ -838,6 +836,10 @@ function Archive({
   restore: (id: string) => void;
 }) {
   const rows = useMemo(() => items, [items]);
+  const [filter, setFilter] = useState("");
+  const [category, setCategory] = useState("all");
+  const shownRows = rows.filter((row) => row.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || row.category === category));
+  const categories = [...new Set(rows.map((row) => row.category))];
   return (
     <section>
       <header className="page-header">
@@ -856,21 +858,13 @@ function Archive({
           <div className="filter-row">
             <label>
               <FiSearch />
-              <input placeholder="Search archive" />
+              <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search archive" />
             </label>
-            <button>
-              All reasons <FiChevronDown />
-            </button>
-            <button>
-              Date range <FiChevronDown />
-            </button>
-            <button>
-              Source <FiChevronDown />
-            </button>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">All categories</option>{categories.map((value) => <option key={value}>{value}</option>)}</select>
           </div>
           <div className="archive-table">
-            {rows.length === 0 && <div className="empty-queue"><FiArchive /><h2>Your archive is empty</h2><p>Discarded stories will stay here so they are not suggested again.</p></div>}
-            {rows.map((r, i) => (
+            {shownRows.length === 0 && <div className="empty-queue"><FiArchive /><h2>Your archive is empty</h2><p>Discarded stories will stay here so they are not suggested again.</p></div>}
+            {shownRows.map((r, i) => (
               <div className="archive-row" key={r.id}>
                 <div>
                   <h3>{r.title}</h3>
