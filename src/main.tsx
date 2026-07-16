@@ -333,9 +333,9 @@ function Dashboard({
         </button>
       </header>
       <div className="metrics">
-        <Metric number="25" label="To review" icon={<FiFileText />} />
-        <Metric number="7" label="Produced" icon={<FiCheck />} />
-        <Metric number="18" label="Archived" icon={<FiArchive />} />
+        <Metric number={String(items.length)} label="To review" icon={<FiFileText />} />
+        <Metric number="0" label="Produced" icon={<FiCheck />} />
+        <Metric number="0" label="Archived" icon={<FiArchive />} />
       </div>
       <div className="filter-row">
         <label>
@@ -866,9 +866,9 @@ function Archive({
         </div>
       </header>
       <div className="metrics archive-metrics">
-        <Metric number="142" label="Discarded" icon={<FiTrash2 />} />
-        <Metric number="88" label="Low fit" icon={<FiArrowRight />} />
-        <Metric number="51" label="Duplicates" icon={<FiGrid />} />
+        <Metric number={String(rows.length)} label="Discarded" icon={<FiTrash2 />} />
+        <Metric number="0" label="Low fit" icon={<FiArrowRight />} />
+        <Metric number="0" label="Duplicates" icon={<FiGrid />} />
       </div>
       <div className="archive-layout">
         <div>
