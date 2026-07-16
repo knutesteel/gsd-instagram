@@ -1,58 +1,886 @@
-import React, { useMemo, useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import { FiArchive, FiArrowLeft, FiArrowRight, FiBookOpen, FiCheck, FiChevronDown, FiClock, FiCompass, FiEdit3, FiExternalLink, FiFileText, FiGrid, FiImage, FiMoreHorizontal, FiPlus, FiRefreshCw, FiSearch, FiSettings, FiTrash2, FiUploadCloud, FiX } from 'react-icons/fi';
-import './styles.css';
+import React, { useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  FiArchive,
+  FiArrowLeft,
+  FiArrowRight,
+  FiBookOpen,
+  FiCheck,
+  FiChevronDown,
+  FiClock,
+  FiCompass,
+  FiEdit3,
+  FiExternalLink,
+  FiFileText,
+  FiGrid,
+  FiImage,
+  FiMoreHorizontal,
+  FiPlus,
+  FiRefreshCw,
+  FiSearch,
+  FiSettings,
+  FiTrash2,
+  FiUploadCloud,
+  FiX,
+} from "react-icons/fi";
+import "./styles.css";
 
-type Screen = 'dashboard' | 'discover' | 'detail' | 'produce' | 'preview' | 'archive';
-type Story = { id:number; title:string; overview:string; category:string; score:number; type:string; status:'Proposed'|'Produced'|'Archived'; };
+type Screen =
+  | "dashboard"
+  | "discover"
+  | "detail"
+  | "produce"
+  | "preview"
+  | "archive";
+type Story = {
+  id: number;
+  title: string;
+  overview: string;
+  category: string;
+  score: number;
+  type: string;
+  status: "Proposed" | "Produced" | "Archived";
+};
 
 const stories: Story[] = [
-  { id:1, title:'Notifications have a measurable cognitive cost', overview:'New research measures how each alert leaves a little concentration residue behind.', category:'Attention & Brain', score:92, type:'Carousel', status:'Proposed' },
-  { id:2, title:'The squirrel that outsmarted the bird feeder', overview:'A determined squirrel turns a complicated feeder into an unexpectedly good persistence lesson.', category:'Animal Behavior', score:88, type:'Reel', status:'Proposed' },
-  { id:3, title:'A five-minute reset that works today', overview:'A small, research-backed routine restores attention without an app, purchase, or perfect schedule.', category:'Productivity Tip', score:84, type:'Carousel', status:'Proposed' },
-  { id:4, title:'Researchers map distraction’s hidden loop', overview:'Why jumping between tiny tasks feels productive while quietly draining the work that matters.', category:'Psychology & Behavior', score:81, type:'Carousel', status:'Proposed' },
-  { id:5, title:'NASA finds a beautifully strange new world', overview:'A new exoplanet discovery offers the rare kind of wonder that makes a brain stop scrolling.', category:'Space & Science', score:79, type:'Single image', status:'Proposed' }
+  {
+    id: 1,
+    title: "Notifications have a measurable cognitive cost",
+    overview:
+      "New research measures how each alert leaves a little concentration residue behind.",
+    category: "Attention & Brain",
+    score: 92,
+    type: "Carousel",
+    status: "Proposed",
+  },
+  {
+    id: 2,
+    title: "The squirrel that outsmarted the bird feeder",
+    overview:
+      "A determined squirrel turns a complicated feeder into an unexpectedly good persistence lesson.",
+    category: "Animal Behavior",
+    score: 88,
+    type: "Reel",
+    status: "Proposed",
+  },
+  {
+    id: 3,
+    title: "A five-minute reset that works today",
+    overview:
+      "A small, research-backed routine restores attention without an app, purchase, or perfect schedule.",
+    category: "Productivity Tip",
+    score: 84,
+    type: "Carousel",
+    status: "Proposed",
+  },
+  {
+    id: 4,
+    title: "Researchers map distraction’s hidden loop",
+    overview:
+      "Why jumping between tiny tasks feels productive while quietly draining the work that matters.",
+    category: "Psychology & Behavior",
+    score: 81,
+    type: "Carousel",
+    status: "Proposed",
+  },
+  {
+    id: 5,
+    title: "NASA finds a beautifully strange new world",
+    overview:
+      "A new exoplanet discovery offers the rare kind of wonder that makes a brain stop scrolling.",
+    category: "Space & Science",
+    score: 79,
+    type: "Single image",
+    status: "Proposed",
+  },
 ];
 
-function App(){
-  const [screen,setScreen]=useState<Screen>('dashboard');
-  const [items,setItems]=useState(stories);
-  const [selected,setSelected]=useState(1);
-  const [query,setQuery]=useState('');
-  const [searching,setSearching]=useState(false);
-  const [caption,setCaption]=useState('You don’t need more willpower. You need fewer tiny interruptions pretending to be urgent.\n\nYour focus is real. Protect it like it matters.');
-  const [change,setChange]=useState('');
-  const [toast,setToast]=useState('');
-  const active=items.find(i=>i.id===selected) ?? items[0];
-  const proposed=items.filter(i=>i.status==='Proposed');
-  const notify=(message:string)=>{setToast(message); window.setTimeout(()=>setToast(''),2600)};
-  const discard=(id:number)=>{setItems(old=>old.map(i=>i.id===id?{...i,status:'Archived'}:i)); notify('Article moved to Archive and protected from future duplicate searches.'); setScreen('dashboard');};
-  const produce=()=>{setItems(old=>old.map(i=>i.id===selected?{...i,status:'Produced'}:i)); setScreen('produce'); notify('Five carousel panels are ready for review.');};
-  const navigate=(next:number)=>{ const index=items.findIndex(i=>i.id===selected); setSelected(items[(index+next+items.length)%items.length].id); };
-  return <div className="app-shell">
-    <aside className="sidebar"><div className="brand"><span>GSD</span><em>Instagram</em></div><p className="brand-note">Focus &gt; Fluff</p>
-      <nav>{([{key:'dashboard',icon:<FiGrid/>,label:'Dashboard'},{key:'discover',icon:<FiCompass/>,label:'Discover'},{key:'archive',icon:<FiArchive/>,label:'Archive'},{key:'detail',icon:<FiBookOpen/>,label:'Brand Voice'},{key:'settings',icon:<FiSettings/>,label:'Settings'}] as const).map(n=><button key={n.key} className={screen===n.key?'nav-item active':'nav-item'} onClick={()=>setScreen(n.key==='settings'?'dashboard':n.key)}>{n.icon}<span>{n.label}</span></button>)}</nav>
-      <div className="sidebar-footer"><div className="voice-dot">G</div><div><b>GSD Voice v3</b><small>Active</small></div></div>
-    </aside>
-    <main className="main-content">{toast&&<div className="toast"><FiCheck/>{toast}</div>}
-      {screen==='dashboard'&&<Dashboard items={proposed} select={(id)=>{setSelected(id);setScreen('detail')}} onProduce={(id)=>{setSelected(id);produce()}} onDiscard={discard}/>} 
-      {screen==='discover'&&<Discover searching={searching} setSearching={setSearching} notify={notify} />}
-      {screen==='detail'&&<Detail story={active} caption={caption} setCaption={setCaption} previous={()=>navigate(-1)} next={()=>navigate(1)} produce={produce} discard={()=>discard(active.id)} />}
-      {screen==='produce'&&<Produce story={active} change={change} setChange={setChange} onPreview={()=>setScreen('preview')} notify={notify}/>} 
-      {screen==='preview'&&<Preview caption={caption} back={()=>setScreen('produce')} notify={notify}/>} 
-      {screen==='archive'&&<Archive items={items.filter(i=>i.status==='Archived')} restore={(id)=>{setItems(old=>old.map(i=>i.id===id?{...i,status:'Proposed'}:i));notify('Restored to the story queue.')}}/>}
-    </main>
-  </div>
+function App() {
+  const [screen, setScreen] = useState<Screen>("dashboard");
+  const [items, setItems] = useState(stories);
+  const [selected, setSelected] = useState(1);
+  const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [caption, setCaption] = useState(
+    "You don’t need more willpower. You need fewer tiny interruptions pretending to be urgent.\n\nYour focus is real. Protect it like it matters.",
+  );
+  const [change, setChange] = useState("");
+  const [toast, setToast] = useState("");
+  const active = items.find((i) => i.id === selected) ?? items[0];
+  const proposed = items.filter((i) => i.status === "Proposed");
+  const notify = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2600);
+  };
+  const discard = (id: number) => {
+    setItems((old) =>
+      old.map((i) => (i.id === id ? { ...i, status: "Archived" } : i)),
+    );
+    notify(
+      "Article moved to Archive and protected from future duplicate searches.",
+    );
+    setScreen("dashboard");
+  };
+  const produce = () => {
+    setItems((old) =>
+      old.map((i) => (i.id === selected ? { ...i, status: "Produced" } : i)),
+    );
+    setScreen("produce");
+    notify("Five carousel panels are ready for review.");
+  };
+  const navigate = (next: number) => {
+    const index = items.findIndex((i) => i.id === selected);
+    setSelected(items[(index + next + items.length) % items.length].id);
+  };
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <span>GSD</span>
+          <em>Instagram</em>
+        </div>
+        <p className="brand-note">Focus &gt; Fluff</p>
+        <nav>
+          {(
+            [
+              { key: "dashboard", icon: <FiGrid />, label: "Dashboard" },
+              { key: "discover", icon: <FiCompass />, label: "Discover" },
+              { key: "archive", icon: <FiArchive />, label: "Archive" },
+              { key: "detail", icon: <FiBookOpen />, label: "Brand Voice" },
+              { key: "settings", icon: <FiSettings />, label: "Settings" },
+            ] as const
+          ).map((n) => (
+            <button
+              key={n.key}
+              className={screen === n.key ? "nav-item active" : "nav-item"}
+              onClick={() =>
+                setScreen(n.key === "settings" ? "dashboard" : n.key)
+              }
+            >
+              {n.icon}
+              <span>{n.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <div className="voice-dot">G</div>
+          <div>
+            <b>GSD Voice v3</b>
+            <small>Active</small>
+          </div>
+        </div>
+      </aside>
+      <main className="main-content">
+        {toast && (
+          <div className="toast">
+            <FiCheck />
+            {toast}
+          </div>
+        )}
+        {screen === "dashboard" && (
+          <Dashboard
+            items={proposed}
+            select={(id) => {
+              setSelected(id);
+              setScreen("detail");
+            }}
+            onProduce={(id) => {
+              setSelected(id);
+              produce();
+            }}
+            onDiscard={discard}
+          />
+        )}
+        {screen === "discover" && (
+          <Discover
+            searching={searching}
+            setSearching={setSearching}
+            notify={notify}
+          />
+        )}
+        {screen === "detail" && (
+          <Detail
+            story={active}
+            caption={caption}
+            setCaption={setCaption}
+            previous={() => navigate(-1)}
+            next={() => navigate(1)}
+            produce={produce}
+            discard={() => discard(active.id)}
+          />
+        )}
+        {screen === "produce" && (
+          <Produce
+            story={active}
+            change={change}
+            setChange={setChange}
+            onPreview={() => setScreen("preview")}
+            notify={notify}
+          />
+        )}
+        {screen === "preview" && (
+          <Preview
+            caption={caption}
+            back={() => setScreen("produce")}
+            notify={notify}
+          />
+        )}
+        {screen === "archive" && (
+          <Archive
+            items={items.filter((i) => i.status === "Archived")}
+            restore={(id) => {
+              setItems((old) =>
+                old.map((i) =>
+                  i.id === id ? { ...i, status: "Proposed" } : i,
+                ),
+              );
+              notify("Restored to the story queue.");
+            }}
+          />
+        )}
+      </main>
+    </div>
+  );
 }
 
-function Dashboard({items,select,onProduce,onDiscard}:{items:Story[];select:(id:number)=>void;onProduce:(id:number)=>void;onDiscard:(id:number)=>void}){const [filter,setFilter]=useState(''); const shown=items.filter(i=>i.title.toLowerCase().includes(filter.toLowerCase())); return <section><header className="page-header"><div><h1>Your story queue</h1><p>High-potential stories, ranked for the GSD audience.</p></div><button className="button primary"><FiPlus/> Find fresh stories</button></header><div className="metrics"><Metric number="25" label="To review" icon={<FiFileText/>}/><Metric number="7" label="Produced" icon={<FiCheck/>}/><Metric number="18" label="Archived" icon={<FiArchive/>}/></div><div className="filter-row"><label><FiSearch/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search stories"/></label><button>All status <FiChevronDown/></button><button>Category <FiChevronDown/></button><button>Score <FiChevronDown/></button><button>Post type <FiChevronDown/></button></div><div className="story-table"><div className="story-head"><span>Story</span><span>Category</span><span>Score</span><span>Post type</span><span>Actions</span></div>{shown.map(item=><div className="story-row" key={item.id}><div><h3>{item.title}</h3><p>{item.overview}</p></div><span className="chip">{item.category}</span><span className="score">{item.score}</span><span className="type">{item.type}</span><div className="actions"><button onClick={()=>select(item.id)}>Edit</button><button className="outline" onClick={()=>onProduce(item.id)}>Produce</button><button className="text-danger" onClick={()=>onDiscard(item.id)}>Discard</button></div></div>)}</div></section>}
-function Metric({number,label,icon}:{number:string;label:string;icon:React.ReactNode}){return <div className="metric"><div><strong>{number}</strong><span>{label}</span></div><i>{icon}</i></div>}
-function Discover({searching,setSearching,notify}:{searching:boolean;setSearching:(v:boolean)=>void;notify:(m:string)=>void}){const run=()=>{setSearching(true);window.setTimeout(()=>{setSearching(false);notify('25 qualified stories added to the queue.');},1500)};return <section><header className="page-header"><div><h1>Find fresh stories</h1><p>Discover high-potential Instagram stories based on your topics and research requirements.</p></div></header><div className="discover-grid"><div className="panel search-panel"><div className="segmented"><button>Manual URL</button><button className="selected">System Search</button></div><label className="field-label">Timeframe<select defaultValue="48"><option value="48">Last 48 hours</option><option>Last 24 hours</option></select></label><p className="field-label">Topics</p><div className="chips"><span>Attention &amp; Brain <FiX/></span><span>Animal Behavior <FiX/></span><span>Weird Human News <FiX/></span><span>Productivity Tips <FiX/></span><span>Science &amp; Space <FiX/></span></div><button className="button primary wide" onClick={run}>{searching?<><FiRefreshCw className="spin"/> Researching stories</>:<><FiSearch/> Search for stories</>}</button></div><div className="panel requirements"><h2>Research requirements</h2><Requirement title="Direct, accessible sources" text="Prioritize primary sources, official accounts, and first-hand reporting."/><Requirement title="Category variety" text="Cover multiple angles and source types across each search."/><Requirement title="8–10 search queries" text="Run targeted research across every topic area."/></div></div><div className="panel progress"><h2>{searching?'Preparing 10 searches':'Ready to research'}</h2>{['Attention & Brain','Animal Behavior','Weird Human News'].map((t,i)=><div className="progress-row" key={t}><span className="round">{i+1}</span><b>{t}</b><p>{i===0?'How attention spans change with smartphone use':i===1?'Unexpected animal problem solving':'Practical tactics to protect your focus'}</p><small>{searching?'Searching':'Queued'}</small></div>)}</div></section>}
-function Requirement({title,text}:{title:string;text:string}){return <div className="requirement"><i><FiCheck/></i><div><b>{title}</b><p>{text}</p></div></div>}
-function Detail({story,caption,setCaption,previous,next,produce,discard}:{story:Story;caption:string;setCaption:(s:string)=>void;previous:()=>void;next:()=>void;produce:()=>void;discard:()=>void}){return <section><div className="detail-top"><p>Story queue <span>/</span> {story.title}</p><div><button onClick={previous}><FiArrowLeft/> Previous</button><button onClick={next}>Next <FiArrowRight/></button><button onClick={discard}><FiTrash2/> Discard</button><button className="button primary" onClick={produce}>Produce</button></div></div><h1>Article detail</h1><div className="detail-grid"><div className="left-fields"><div className="source"><FiExternalLink/><span>https://research.example.com/attention-cost</span></div><Field label="Article summary"><textarea defaultValue={story.overview}/></Field><Field label="Post type"><select defaultValue={story.type}><option>Carousel</option><option>Reel</option><option>Single image</option></select></Field><Field label="Panels"><input defaultValue="5"/></Field><Field label="Image summary"><textarea defaultValue={'Location: warm home office\nTime: late afternoon\nHank’s expression: tired but amused\nthe squirrel’s expression: smug and delighted'}/></Field></div><div className="right-fields"><Field label="Detailed production prompt"><textarea className="tall" defaultValue={'Create five separate 4:5 carousel panels using the GSD Voice and ICP. Hank is visibly larger than the squirrel. All conversation is in readable speech bubbles. Maintain clothing and setting continuity.\n\nHank: “Every notification is a tiny meeting you didn’t agree to.”\nthe squirrel: “I put them all on your calendar. You’re welcome.”'}/></Field><Field label="Caption"><textarea value={caption} onChange={e=>setCaption(e.target.value)} /></Field><Field label="Suggested hashtags"><input defaultValue="#FocusOverFluff, #Attention, #GetShitDone, #DeepWork"/></Field></div></div></section>}
-function Field({label,children}:{label:string;children:React.ReactNode}){return <label className="field"><b>{label}</b>{children}</label>}
-function Produce({story,change,setChange,onPreview,notify}:{story:Story;change:string;setChange:(s:string)=>void;onPreview:()=>void;notify:(m:string)=>void}){const [active,setActive]=useState(2);return <section><header className="produce-head"><div><h1>Produce carousel <span className="ready"><FiCheck/> Assets ready</span></h1><p><FiFileText/> {story.title}</p></div><div className="produce-actions"><span className="big-score">92<small>GSD score</small></span><button className="button primary" onClick={onPreview}>Preview on Instagram <FiExternalLink/></button><button><FiMoreHorizontal/></button></div></header><div className="production-layout"><div><div className="asset-strip">{[1,2,3,4,5].map(n=><button key={n} className={active===n?'asset selected':'asset'} onClick={()=>setActive(n)}><img src="/assets/carousel-production.png" alt={`Generated carousel panel ${n}`}/><span>{n}</span></button>)}</div><div className="copy-grid"><Field label="Post text"><textarea defaultValue={'Every ping pulls a little from your focus.\n\nThe cost is real—your attention, your time, your peace.\n\nProtect your focus. Do what matters most.'}/></Field><div className="field hash-field"><b>Suggested hashtags</b><div className="hashes">{['#Focus','#DeepWork','#AttentionIsScarce','#DigitalWellbeing','#MindfulWork','#GSD'].map(x=><span key={x}>{x} <FiPlus/></span>)}</div></div></div></div><aside className="asset-editor"><h2>Asset {active} of 5</h2><div className="tabs"><button className="on">Generated</button><button>Upload replacement</button></div><Field label="What would you like to change?"><textarea placeholder="Describe the change you want to see…" value={change} onChange={e=>setChange(e.target.value)}/></Field><button className="button primary wide" onClick={()=>{setChange('');notify('Panel regeneration started with your requested change.')}}><FiRefreshCw/> Regenerate</button><button className="button wide"><FiUploadCloud/> Replace with upload</button><h3>Prompt history</h3><div className="history"><p>Hank has an idea moment with a lightbulb. <small>Just now</small></p><p>More emphasis on the lightbulb idea. <small>2m ago</small></p><p>Hank pointing up, squirrel looks up. <small>5m ago</small></p></div></aside></div></section>}
-function Preview({caption,back,notify}:{caption:string;back:()=>void;notify:(m:string)=>void}){return <section><header className="preview-header"><button onClick={back}><FiArrowLeft/> Return to editor</button><h1>Instagram preview</h1><div><button>Carousel · 5 panels <FiChevronDown/></button><button className="button primary" onClick={()=>notify('Assets approved and ready for export.') }><FiCheck/> Approve assets</button></div></header><div className="preview-layout"><div className="post-frame"><div className="post-user"><span className="avatar">H</span><b>Hank and the squirrel</b><FiMoreHorizontal/></div><div className="post-image"><img src="/assets/hank-squirrel-preview.png" alt="Hank and the squirrel carousel preview"/></div><div className="post-controls"><span>♡</span><span>◯</span><span>↗</span><span className="save">♧</span></div><div className="dots"><i className="on"/><i/><i/><i/><i/></div></div><aside className="post-details"><h2>Post details</h2><b>Caption</b><p>{caption}</p><b>Hashtags</b><div className="hashtags">{['#FocusOverFluff','#Attention','#GetShitDone','#DeepWork'].map(x=><span key={x}>{x} <FiX/></span>)}</div><div className="preview-tabs"><button className="on">Feed preview</button><button>Grid preview</button></div><div className="mini-grid">{Array.from({length:9},(_,i)=><img key={i} src="/assets/carousel-production.png" alt="Carousel grid thumbnail"/>)}</div></aside></div></section>}
-function Archive({items,restore}:{items:Story[];restore:(id:number)=>void}){const rows=useMemo(()=>items.length?items:[{id:9,title:'A generic hustle-culture listicle',overview:'',category:'Productivity Tip',score:45,type:'',status:'Archived'} as Story], [items]);return <section><header className="page-header"><div><h1>Archive</h1><p>Kept out of your queue. Never shown again unless restored.</p></div></header><div className="metrics archive-metrics"><Metric number="142" label="Discarded" icon={<FiTrash2/>}/><Metric number="88" label="Low fit" icon={<FiArrowRight/>}/><Metric number="51" label="Duplicates" icon={<FiGrid/>}/></div><div className="archive-layout"><div><div className="filter-row"><label><FiSearch/><input placeholder="Search archive"/></label><button>All reasons <FiChevronDown/></button><button>Date range <FiChevronDown/></button><button>Source <FiChevronDown/></button></div><div className="archive-table">{rows.map((r,i)=><div className="archive-row" key={r.id}><div><h3>{r.title}</h3><small>Direct source article · Jul {16-i}, 2026</small></div><span className="chip">{r.category}</span><span className="reason">{i%2?'Duplicate coverage':'Discarded by editor'}</span><button onClick={()=>restore(r.id)}><FiRefreshCw/> Restore</button></div>)}</div></div><aside className="duplicate-card"><h2>Duplicate protection</h2><p>We automatically identify and exclude content that’s too similar to what you’ve already queued or published.</p><Requirement title="Canonical URLs" text="Exact sources are blocked across all future searches."/><Requirement title="Title similarity" text="Semantic matching avoids near-duplicates."/><Requirement title="Saved exclusions" text="Every removal has a clear reason and can be restored."/></aside></div></section>}
+function Dashboard({
+  items,
+  select,
+  onProduce,
+  onDiscard,
+}: {
+  items: Story[];
+  select: (id: number) => void;
+  onProduce: (id: number) => void;
+  onDiscard: (id: number) => void;
+}) {
+  const [filter, setFilter] = useState("");
+  const shown = items.filter((i) =>
+    i.title.toLowerCase().includes(filter.toLowerCase()),
+  );
+  return (
+    <section>
+      <header className="page-header">
+        <div>
+          <h1>Your story queue</h1>
+          <p>High-potential stories, ranked for the GSD audience.</p>
+        </div>
+        <button className="button primary">
+          <FiPlus /> Find fresh stories
+        </button>
+      </header>
+      <div className="metrics">
+        <Metric number="25" label="To review" icon={<FiFileText />} />
+        <Metric number="7" label="Produced" icon={<FiCheck />} />
+        <Metric number="18" label="Archived" icon={<FiArchive />} />
+      </div>
+      <div className="filter-row">
+        <label>
+          <FiSearch />
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search stories"
+          />
+        </label>
+        <button>
+          All status <FiChevronDown />
+        </button>
+        <button>
+          Category <FiChevronDown />
+        </button>
+        <button>
+          Score <FiChevronDown />
+        </button>
+        <button>
+          Post type <FiChevronDown />
+        </button>
+      </div>
+      <div className="story-table">
+        <div className="story-head">
+          <span>Story</span>
+          <span>Category</span>
+          <span>Score</span>
+          <span>Post type</span>
+          <span>Actions</span>
+        </div>
+        {shown.map((item) => (
+          <div className="story-row" key={item.id}>
+            <div>
+              <h3>{item.title}</h3>
+              <p>{item.overview}</p>
+            </div>
+            <span className="chip">{item.category}</span>
+            <span className="score">{item.score}</span>
+            <span className="type">{item.type}</span>
+            <div className="actions">
+              <button onClick={() => select(item.id)}>Edit</button>
+              <button className="outline" onClick={() => onProduce(item.id)}>
+                Produce
+              </button>
+              <button
+                className="text-danger"
+                onClick={() => onDiscard(item.id)}
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+function Metric({
+  number,
+  label,
+  icon,
+}: {
+  number: string;
+  label: string;
+  icon: React.ReactNode;
+}) {
+  return (
+    <div className="metric">
+      <div>
+        <strong>{number}</strong>
+        <span>{label}</span>
+      </div>
+      <i>{icon}</i>
+    </div>
+  );
+}
+function Discover({
+  searching,
+  setSearching,
+  notify,
+}: {
+  searching: boolean;
+  setSearching: (v: boolean) => void;
+  notify: (m: string) => void;
+}) {
+  const run = () => {
+    setSearching(true);
+    window.setTimeout(() => {
+      setSearching(false);
+      notify("25 qualified stories added to the queue.");
+    }, 1500);
+  };
+  return (
+    <section>
+      <header className="page-header">
+        <div>
+          <h1>Find fresh stories</h1>
+          <p>
+            Discover high-potential Instagram stories based on your topics and
+            research requirements.
+          </p>
+        </div>
+      </header>
+      <div className="discover-grid">
+        <div className="panel search-panel">
+          <div className="segmented">
+            <button>Manual URL</button>
+            <button className="selected">System Search</button>
+          </div>
+          <label className="field-label">
+            Timeframe
+            <select defaultValue="48">
+              <option value="48">Last 48 hours</option>
+              <option>Last 24 hours</option>
+            </select>
+          </label>
+          <p className="field-label">Topics</p>
+          <div className="chips">
+            <span>
+              Attention &amp; Brain <FiX />
+            </span>
+            <span>
+              Animal Behavior <FiX />
+            </span>
+            <span>
+              Weird Human News <FiX />
+            </span>
+            <span>
+              Productivity Tips <FiX />
+            </span>
+            <span>
+              Science &amp; Space <FiX />
+            </span>
+          </div>
+          <button className="button primary wide" onClick={run}>
+            {searching ? (
+              <>
+                <FiRefreshCw className="spin" /> Researching stories
+              </>
+            ) : (
+              <>
+                <FiSearch /> Search for stories
+              </>
+            )}
+          </button>
+        </div>
+        <div className="panel requirements">
+          <h2>Research requirements</h2>
+          <Requirement
+            title="Direct, accessible sources"
+            text="Prioritize primary sources, official accounts, and first-hand reporting."
+          />
+          <Requirement
+            title="Category variety"
+            text="Cover multiple angles and source types across each search."
+          />
+          <Requirement
+            title="8–10 search queries"
+            text="Run targeted research across every topic area."
+          />
+        </div>
+      </div>
+      <div className="panel progress">
+        <h2>{searching ? "Preparing 10 searches" : "Ready to research"}</h2>
+        {["Attention & Brain", "Animal Behavior", "Weird Human News"].map(
+          (t, i) => (
+            <div className="progress-row" key={t}>
+              <span className="round">{i + 1}</span>
+              <b>{t}</b>
+              <p>
+                {i === 0
+                  ? "How attention spans change with smartphone use"
+                  : i === 1
+                    ? "Unexpected animal problem solving"
+                    : "Practical tactics to protect your focus"}
+              </p>
+              <small>{searching ? "Searching" : "Queued"}</small>
+            </div>
+          ),
+        )}
+      </div>
+    </section>
+  );
+}
+function Requirement({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="requirement">
+      <i>
+        <FiCheck />
+      </i>
+      <div>
+        <b>{title}</b>
+        <p>{text}</p>
+      </div>
+    </div>
+  );
+}
+function Detail({
+  story,
+  caption,
+  setCaption,
+  previous,
+  next,
+  produce,
+  discard,
+}: {
+  story: Story;
+  caption: string;
+  setCaption: (s: string) => void;
+  previous: () => void;
+  next: () => void;
+  produce: () => void;
+  discard: () => void;
+}) {
+  return (
+    <section>
+      <div className="detail-top">
+        <p>
+          Story queue <span>/</span> {story.title}
+        </p>
+        <div>
+          <button onClick={previous}>
+            <FiArrowLeft /> Previous
+          </button>
+          <button onClick={next}>
+            Next <FiArrowRight />
+          </button>
+          <button onClick={discard}>
+            <FiTrash2 /> Discard
+          </button>
+          <button className="button primary" onClick={produce}>
+            Produce
+          </button>
+        </div>
+      </div>
+      <h1>Article detail</h1>
+      <div className="detail-grid">
+        <div className="left-fields">
+          <div className="source">
+            <FiExternalLink />
+            <span>https://research.example.com/attention-cost</span>
+          </div>
+          <Field label="Article summary">
+            <textarea defaultValue={story.overview} />
+          </Field>
+          <Field label="Post type">
+            <select defaultValue={story.type}>
+              <option>Carousel</option>
+              <option>Reel</option>
+              <option>Single image</option>
+            </select>
+          </Field>
+          <Field label="Panels">
+            <input defaultValue="5" />
+          </Field>
+          <Field label="Image summary">
+            <textarea
+              defaultValue={
+                "Location: warm home office\nTime: late afternoon\nHank’s expression: tired but amused\nthe squirrel’s expression: smug and delighted"
+              }
+            />
+          </Field>
+        </div>
+        <div className="right-fields">
+          <Field label="Detailed production prompt">
+            <textarea
+              className="tall"
+              defaultValue={
+                "Create five separate 4:5 carousel panels using the GSD Voice and ICP. Hank is visibly larger than the squirrel. All conversation is in readable speech bubbles. Maintain clothing and setting continuity.\n\nHank: “Every notification is a tiny meeting you didn’t agree to.”\nthe squirrel: “I put them all on your calendar. You’re welcome.”"
+              }
+            />
+          </Field>
+          <Field label="Caption">
+            <textarea
+              value={caption}
+              onChange={(e) => setCaption(e.target.value)}
+            />
+          </Field>
+          <Field label="Suggested hashtags">
+            <input defaultValue="#FocusOverFluff, #Attention, #GetShitDone, #DeepWork" />
+          </Field>
+        </div>
+      </div>
+    </section>
+  );
+}
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="field">
+      <b>{label}</b>
+      {children}
+    </label>
+  );
+}
+function Produce({
+  story,
+  change,
+  setChange,
+  onPreview,
+  notify,
+}: {
+  story: Story;
+  change: string;
+  setChange: (s: string) => void;
+  onPreview: () => void;
+  notify: (m: string) => void;
+}) {
+  const [active, setActive] = useState(2);
+  return (
+    <section>
+      <header className="produce-head">
+        <div>
+          <h1>
+            Produce carousel{" "}
+            <span className="ready">
+              <FiCheck /> Assets ready
+            </span>
+          </h1>
+          <p>
+            <FiFileText /> {story.title}
+          </p>
+        </div>
+        <div className="produce-actions">
+          <span className="big-score">
+            92<small>GSD score</small>
+          </span>
+          <button className="button primary" onClick={onPreview}>
+            Preview on Instagram <FiExternalLink />
+          </button>
+          <button>
+            <FiMoreHorizontal />
+          </button>
+        </div>
+      </header>
+      <div className="production-layout">
+        <div>
+          <div className="asset-strip">
+            {[1, 2, 3, 4, 5].map((n) => (
+              <button
+                key={n}
+                className={active === n ? "asset selected" : "asset"}
+                onClick={() => setActive(n)}
+              >
+                <img
+                  src="/assets/carousel-production.png"
+                  alt={`Generated carousel panel ${n}`}
+                />
+                <span>{n}</span>
+              </button>
+            ))}
+          </div>
+          <div className="copy-grid">
+            <Field label="Post text">
+              <textarea
+                defaultValue={
+                  "Every ping pulls a little from your focus.\n\nThe cost is real—your attention, your time, your peace.\n\nProtect your focus. Do what matters most."
+                }
+              />
+            </Field>
+            <div className="field hash-field">
+              <b>Suggested hashtags</b>
+              <div className="hashes">
+                {[
+                  "#Focus",
+                  "#DeepWork",
+                  "#AttentionIsScarce",
+                  "#DigitalWellbeing",
+                  "#MindfulWork",
+                  "#GSD",
+                ].map((x) => (
+                  <span key={x}>
+                    {x} <FiPlus />
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside className="asset-editor">
+          <h2>Asset {active} of 5</h2>
+          <div className="tabs">
+            <button className="on">Generated</button>
+            <button>Upload replacement</button>
+          </div>
+          <Field label="What would you like to change?">
+            <textarea
+              placeholder="Describe the change you want to see…"
+              value={change}
+              onChange={(e) => setChange(e.target.value)}
+            />
+          </Field>
+          <button
+            className="button primary wide"
+            onClick={() => {
+              setChange("");
+              notify("Panel regeneration started with your requested change.");
+            }}
+          >
+            <FiRefreshCw /> Regenerate
+          </button>
+          <button className="button wide">
+            <FiUploadCloud /> Replace with upload
+          </button>
+          <h3>Prompt history</h3>
+          <div className="history">
+            <p>
+              Hank has an idea moment with a lightbulb. <small>Just now</small>
+            </p>
+            <p>
+              More emphasis on the lightbulb idea. <small>2m ago</small>
+            </p>
+            <p>
+              Hank pointing up, squirrel looks up. <small>5m ago</small>
+            </p>
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+function Preview({
+  caption,
+  back,
+  notify,
+}: {
+  caption: string;
+  back: () => void;
+  notify: (m: string) => void;
+}) {
+  return (
+    <section>
+      <header className="preview-header">
+        <button onClick={back}>
+          <FiArrowLeft /> Return to editor
+        </button>
+        <h1>Instagram preview</h1>
+        <div>
+          <button>
+            Carousel · 5 panels <FiChevronDown />
+          </button>
+          <button
+            className="button primary"
+            onClick={() => notify("Assets approved and ready for export.")}
+          >
+            <FiCheck /> Approve assets
+          </button>
+        </div>
+      </header>
+      <div className="preview-layout">
+        <div className="post-frame">
+          <div className="post-user">
+            <span className="avatar">H</span>
+            <b>Hank and the squirrel</b>
+            <FiMoreHorizontal />
+          </div>
+          <div className="post-image">
+            <img
+              src="/assets/hank-squirrel-preview.png"
+              alt="Hank and the squirrel carousel preview"
+            />
+          </div>
+          <div className="post-controls">
+            <span>♡</span>
+            <span>◯</span>
+            <span>↗</span>
+            <span className="save">♧</span>
+          </div>
+          <div className="dots">
+            <i className="on" />
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+        </div>
+        <aside className="post-details">
+          <h2>Post details</h2>
+          <b>Caption</b>
+          <p>{caption}</p>
+          <b>Hashtags</b>
+          <div className="hashtags">
+            {["#FocusOverFluff", "#Attention", "#GetShitDone", "#DeepWork"].map(
+              (x) => (
+                <span key={x}>
+                  {x} <FiX />
+                </span>
+              ),
+            )}
+          </div>
+          <div className="preview-tabs">
+            <button className="on">Feed preview</button>
+            <button>Grid preview</button>
+          </div>
+          <div className="mini-grid">
+            {Array.from({ length: 9 }, (_, i) => (
+              <img
+                key={i}
+                src="/assets/carousel-production.png"
+                alt="Carousel grid thumbnail"
+              />
+            ))}
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+function Archive({
+  items,
+  restore,
+}: {
+  items: Story[];
+  restore: (id: number) => void;
+}) {
+  const rows = useMemo(
+    () =>
+      items.length
+        ? items
+        : [
+            {
+              id: 9,
+              title: "A generic hustle-culture listicle",
+              overview: "",
+              category: "Productivity Tip",
+              score: 45,
+              type: "",
+              status: "Archived",
+            } as Story,
+          ],
+    [items],
+  );
+  return (
+    <section>
+      <header className="page-header">
+        <div>
+          <h1>Archive</h1>
+          <p>Kept out of your queue. Never shown again unless restored.</p>
+        </div>
+      </header>
+      <div className="metrics archive-metrics">
+        <Metric number="142" label="Discarded" icon={<FiTrash2 />} />
+        <Metric number="88" label="Low fit" icon={<FiArrowRight />} />
+        <Metric number="51" label="Duplicates" icon={<FiGrid />} />
+      </div>
+      <div className="archive-layout">
+        <div>
+          <div className="filter-row">
+            <label>
+              <FiSearch />
+              <input placeholder="Search archive" />
+            </label>
+            <button>
+              All reasons <FiChevronDown />
+            </button>
+            <button>
+              Date range <FiChevronDown />
+            </button>
+            <button>
+              Source <FiChevronDown />
+            </button>
+          </div>
+          <div className="archive-table">
+            {rows.map((r, i) => (
+              <div className="archive-row" key={r.id}>
+                <div>
+                  <h3>{r.title}</h3>
+                  <small>Direct source article · Jul {16 - i}, 2026</small>
+                </div>
+                <span className="chip">{r.category}</span>
+                <span className="reason">
+                  {i % 2 ? "Duplicate coverage" : "Discarded by editor"}
+                </span>
+                <button onClick={() => restore(r.id)}>
+                  <FiRefreshCw /> Restore
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+        <aside className="duplicate-card">
+          <h2>Duplicate protection</h2>
+          <p>
+            We automatically identify and exclude content that’s too similar to
+            what you’ve already queued or published.
+          </p>
+          <Requirement
+            title="Canonical URLs"
+            text="Exact sources are blocked across all future searches."
+          />
+          <Requirement
+            title="Title similarity"
+            text="Semantic matching avoids near-duplicates."
+          />
+          <Requirement
+            title="Saved exclusions"
+            text="Every removal has a clear reason and can be restored."
+          />
+        </aside>
+      </div>
+    </section>
+  );
+}
 
-createRoot(document.getElementById('root')!).render(<App/>);
+createRoot(document.getElementById("root")!).render(<App />);
