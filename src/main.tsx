@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   FiArchive,
@@ -24,6 +24,7 @@ import {
   FiX,
 } from "react-icons/fi";
 import "./styles.css";
+import { supabase, supabaseConfigured } from "./lib/supabase";
 
 type Screen =
   | "dashboard"
@@ -33,7 +34,7 @@ type Screen =
   | "preview"
   | "archive";
 type Story = {
-  id: number;
+  id: string;
   title: string;
   overview: string;
   category: string;
@@ -44,7 +45,7 @@ type Story = {
 
 const stories: Story[] = [
   {
-    id: 1,
+    id: "demo-1",
     title: "Notifications have a measurable cognitive cost",
     overview:
       "New research measures how each alert leaves a little concentration residue behind.",
@@ -54,7 +55,7 @@ const stories: Story[] = [
     status: "Proposed",
   },
   {
-    id: 2,
+    id: "demo-2",
     title: "The squirrel that outsmarted the bird feeder",
     overview:
       "A determined squirrel turns a complicated feeder into an unexpectedly good persistence lesson.",
@@ -64,7 +65,7 @@ const stories: Story[] = [
     status: "Proposed",
   },
   {
-    id: 3,
+    id: "demo-3",
     title: "A five-minute reset that works today",
     overview:
       "A small, research-backed routine restores attention without an app, purchase, or perfect schedule.",
@@ -74,7 +75,7 @@ const stories: Story[] = [
     status: "Proposed",
   },
   {
-    id: 4,
+    id: "demo-4",
     title: "Researchers map distraction’s hidden loop",
     overview:
       "Why jumping between tiny tasks feels productive while quietly draining the work that matters.",
@@ -84,7 +85,7 @@ const stories: Story[] = [
     status: "Proposed",
   },
   {
-    id: 5,
+    id: "demo-5",
     title: "NASA finds a beautifully strange new world",
     overview:
       "A new exoplanet discovery offers the rare kind of wonder that makes a brain stop scrolling.",
@@ -98,7 +99,7 @@ const stories: Story[] = [
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [items, setItems] = useState(stories);
-  const [selected, setSelected] = useState(1);
+  const [selected, setSelected] = useState("demo-1");
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [caption, setCaption] = useState(
@@ -106,19 +107,49 @@ function App() {
   );
   const [change, setChange] = useState("");
   const [toast, setToast] = useState("");
+  const [authReady, setAuthReady] = useState(!supabaseConfigured);
+  const [userId, setUserId] = useState<string | null>(null);
   const active = items.find((i) => i.id === selected) ?? items[0];
   const proposed = items.filter((i) => i.status === "Proposed");
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
   };
-  const discard = (id: number) => {
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => {
+      setUserId(data.session?.user.id ?? null);
+      setAuthReady(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user.id ?? null);
+      setAuthReady(true);
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+  useEffect(() => {
+    if (!supabase || !userId) return;
+    supabase.from("articles").select("id,title,summary,category,rank,status,post_concepts(post_type)").order("rank", { ascending: false }).then(({ data, error }) => {
+      if (error) return notify(`Couldn’t load your queue: ${error.message}`);
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
+      setItems(saved.length ? saved : stories);
+      if (saved[0]) setSelected(saved[0].id);
+    });
+  }, [userId]);
+  const updateStatus = async (id: string, status: "discarded" | "produced") => {
+    if (!supabase || id.startsWith("demo-")) return;
+    const { error } = await supabase.from("articles").update({ status }).eq("id", id);
+    if (error) notify(`Couldn’t save change: ${error.message}`);
+  };
+  const discard = (id: string) => {
     setItems((old) =>
       old.map((i) => (i.id === id ? { ...i, status: "Archived" } : i)),
     );
+    void updateStatus(id, "discarded");
     notify(
       "Article moved to Archive and protected from future duplicate searches.",
     );
+    void updateStatus(selected, "produced");
     setScreen("dashboard");
   };
   const produce = () => {
@@ -132,6 +163,8 @@ function App() {
     const index = items.findIndex((i) => i.id === selected);
     setSelected(items[(index + next + items.length) % items.length].id);
   };
+  if (!authReady) return <div className="auth-page"><div className="auth-card">Loading your workspace…</div></div>;
+  if (supabaseConfigured && !userId) return <AuthGate />;
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -243,6 +276,30 @@ function App() {
   );
 }
 
+function AuthGate() {
+  const [email, setEmail] = useState("");
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const sendLink = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!supabase) return;
+    setSending(true);
+    const { error } = await supabase.auth.signInWithOtp({
+      email,
+      options: { emailRedirectTo: window.location.origin },
+    });
+    setSending(false);
+    setMessage(error ? error.message : "Check your inbox for a secure sign-in link.");
+  };
+  return <main className="auth-page"><form className="auth-card" onSubmit={sendLink}>
+    <div className="brand"><span>GSD</span><em>Instagram</em></div>
+    <h1>Your story desk</h1><p>Sign in to save research, concepts, and assets privately to your workspace.</p>
+    <label className="field"><b>Email address</b><input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
+    <button className="button primary wide" disabled={sending}>{sending ? "Sending…" : "Email me a sign-in link"}</button>
+    {message && <p className="auth-message">{message}</p>}
+  </form></main>;
+}
+
 function Dashboard({
   items,
   select,
@@ -250,9 +307,9 @@ function Dashboard({
   onDiscard,
 }: {
   items: Story[];
-  select: (id: number) => void;
-  onProduce: (id: number) => void;
-  onDiscard: (id: number) => void;
+  select: (id: string) => void;
+  onProduce: (id: string) => void;
+  onDiscard: (id: string) => void;
 }) {
   const [filter, setFilter] = useState("");
   const shown = items.filter((i) =>
@@ -792,7 +849,7 @@ function Archive({
   restore,
 }: {
   items: Story[];
-  restore: (id: number) => void;
+  restore: (id: string) => void;
 }) {
   const rows = useMemo(
     () =>
@@ -800,7 +857,7 @@ function Archive({
         ? items
         : [
             {
-              id: 9,
+              id: "demo-archive",
               title: "A generic hustle-culture listicle",
               overview: "",
               category: "Productivity Tip",
