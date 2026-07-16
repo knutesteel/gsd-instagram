@@ -111,6 +111,19 @@ function App() {
     const index = items.findIndex((i) => i.id === selected);
     setSelected(items[(index + next + items.length) % items.length].id);
   };
+  const research = async (payload: Record<string, unknown>) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/research", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify(payload) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "Research failed.");
+    await supabase.from("articles").select("id,title,summary,category,rank,status,post_concepts(post_type)").order("rank", { ascending: false }).then(({ data: rows }) => {
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
+      setItems(saved); if (saved[0]) setSelected(saved[0].id);
+    });
+    return result.count as number;
+  };
   if (!authReady) return <div className="auth-page"><div className="auth-card">Loading your workspace…</div></div>;
   if (supabaseConfigured && !userId) return <AuthGate />;
   return (
@@ -178,6 +191,7 @@ function App() {
             searching={searching}
             setSearching={setSearching}
             notify={notify}
+            research={research}
           />
         )}
         {screen === "detail" && (
@@ -395,10 +409,12 @@ function Discover({
   searching,
   setSearching,
   notify,
+  research,
 }: {
   searching: boolean;
   setSearching: (v: boolean) => void;
   notify: (m: string) => void;
+  research: (payload: Record<string, unknown>) => Promise<number>;
 }) {
   const [mode, setMode] = useState<"system" | "manual">("system");
   const [manualUrl, setManualUrl] = useState("");
@@ -407,15 +423,16 @@ function Discover({
   const [topics, setTopics] = useState(["Attention & Brain", "Animal Behavior", "Weird Human News", "Productivity Tips", "Science & Space"]);
   const [queued, setQueued] = useState<string[]>([]);
   const addTopic = () => { const value = topicInput.trim(); if (value && !topics.includes(value)) setTopics([...topics, value]); setTopicInput(""); };
-  const run = () => {
+  const run = async () => {
     if (mode === "manual" && !/^https?:\/\//i.test(manualUrl.trim())) return notify("Paste a complete article URL, starting with https://.");
     if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search phrase or at least one topic.");
     setSearching(true);
-    window.setTimeout(() => {
-      setSearching(false);
-      setQueued(mode === "manual" ? ["Checking the submitted article", "Evaluating GSD fit", "Preparing a post concept"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
-      notify(mode === "manual" ? "Article queued for analysis." : "Three research tasks are queued.");
-    }, 1500);
+    try {
+      const count = await research({ mode, manualUrl: manualUrl.trim(), searchText: searchText.trim(), topics, timeframe: 48 });
+      setQueued(mode === "manual" ? ["Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
+      notify(`${count} ${count === 1 ? "story" : "stories"} added to your dashboard.`);
+    } catch (error) { notify(error instanceof Error ? error.message : "Research failed."); }
+    finally { setSearching(false); }
   };
   return (
     <section>
