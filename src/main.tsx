@@ -77,9 +77,9 @@ function App() {
   }, []);
   useEffect(() => {
     if (!supabase || !userId) return;
-    supabase.from("articles").select("id,title,summary,category,rank,status,post_concepts(post_type)").order("rank", { ascending: false }).then(({ data, error }) => {
+    supabase.from("articles").select("id,title,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
@@ -118,8 +118,8 @@ function App() {
     const response = await fetch("/api/research", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify(payload) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
-    await supabase.from("articles").select("id,title,summary,category,rank,status,post_concepts(post_type)").order("rank", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
+    await supabase.from("articles").select("id,title,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data: rows }) => {
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result.count as number;
