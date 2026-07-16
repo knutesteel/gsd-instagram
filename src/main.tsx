@@ -32,7 +32,8 @@ type Screen =
   | "detail"
   | "produce"
   | "preview"
-  | "archive";
+  | "archive"
+  | "guidance";
 type Story = {
   id: string;
   title: string;
@@ -43,63 +44,10 @@ type Story = {
   status: "Proposed" | "Produced" | "Archived";
 };
 
-const stories: Story[] = [
-  {
-    id: "demo-1",
-    title: "Notifications have a measurable cognitive cost",
-    overview:
-      "New research measures how each alert leaves a little concentration residue behind.",
-    category: "Attention & Brain",
-    score: 92,
-    type: "Carousel",
-    status: "Proposed",
-  },
-  {
-    id: "demo-2",
-    title: "The squirrel that outsmarted the bird feeder",
-    overview:
-      "A determined squirrel turns a complicated feeder into an unexpectedly good persistence lesson.",
-    category: "Animal Behavior",
-    score: 88,
-    type: "Reel",
-    status: "Proposed",
-  },
-  {
-    id: "demo-3",
-    title: "A five-minute reset that works today",
-    overview:
-      "A small, research-backed routine restores attention without an app, purchase, or perfect schedule.",
-    category: "Productivity Tip",
-    score: 84,
-    type: "Carousel",
-    status: "Proposed",
-  },
-  {
-    id: "demo-4",
-    title: "Researchers map distraction’s hidden loop",
-    overview:
-      "Why jumping between tiny tasks feels productive while quietly draining the work that matters.",
-    category: "Psychology & Behavior",
-    score: 81,
-    type: "Carousel",
-    status: "Proposed",
-  },
-  {
-    id: "demo-5",
-    title: "NASA finds a beautifully strange new world",
-    overview:
-      "A new exoplanet discovery offers the rare kind of wonder that makes a brain stop scrolling.",
-    category: "Space & Science",
-    score: 79,
-    type: "Single image",
-    status: "Proposed",
-  },
-];
-
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
-  const [items, setItems] = useState(stories);
-  const [selected, setSelected] = useState("demo-1");
+  const [items, setItems] = useState<Story[]>([]);
+  const [selected, setSelected] = useState("");
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [caption, setCaption] = useState(
@@ -132,12 +80,12 @@ function App() {
     supabase.from("articles").select("id,title,summary,category,rank,status,post_concepts(post_type)").order("rank", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
       const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
-      setItems(saved.length ? saved : stories);
+      setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
   }, [userId]);
   const updateStatus = async (id: string, status: "discarded" | "produced") => {
-    if (!supabase || id.startsWith("demo-")) return;
+    if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
     if (error) notify(`Couldn’t save change: ${error.message}`);
   };
@@ -179,7 +127,7 @@ function App() {
               { key: "dashboard", icon: <FiGrid />, label: "Dashboard" },
               { key: "discover", icon: <FiCompass />, label: "Discover" },
               { key: "archive", icon: <FiArchive />, label: "Archive" },
-              { key: "detail", icon: <FiBookOpen />, label: "Brand Voice" },
+              { key: "guidance", icon: <FiBookOpen />, label: "Prompt guidance" },
               { key: "settings", icon: <FiSettings />, label: "Settings" },
             ] as const
           ).map((n) => (
@@ -187,7 +135,7 @@ function App() {
               key={n.key}
               className={screen === n.key ? "nav-item active" : "nav-item"}
               onClick={() =>
-                setScreen(n.key === "settings" ? "dashboard" : n.key)
+                setScreen(n.key === "settings" ? "guidance" : n.key)
               }
             >
               {n.icon}
@@ -213,6 +161,7 @@ function App() {
         {screen === "dashboard" && (
           <Dashboard
             items={proposed}
+            discover={() => setScreen("discover")}
             select={(id) => {
               setSelected(id);
               setScreen("detail");
@@ -271,6 +220,7 @@ function App() {
             }}
           />
         )}
+        {screen === "guidance" && <Guidance />}
       </main>
     </div>
   );
@@ -300,13 +250,48 @@ function AuthGate() {
   </form></main>;
 }
 
+type PromptDocument = { id: string; kind: "icp" | "voice_guide"; file_name: string; created_at: string };
+function Guidance() {
+  const [documents, setDocuments] = useState<PromptDocument[]>([]);
+  const [uploading, setUploading] = useState<"icp" | "voice_guide" | null>(null);
+  const [message, setMessage] = useState("");
+  const loadDocuments = async () => {
+    if (!supabase) return;
+    const { data, error } = await supabase.from("prompt_documents").select("id,kind,file_name,created_at").eq("is_active", true).order("created_at", { ascending: false });
+    if (error) setMessage(error.message); else setDocuments((data ?? []) as PromptDocument[]);
+  };
+  useEffect(() => { void loadDocuments(); }, []);
+  const upload = async (kind: "icp" | "voice_guide", file?: File) => {
+    if (!supabase || !file) return;
+    if (file.size > 10 * 1024 * 1024) return setMessage("Please choose a file smaller than 10 MB.");
+    setUploading(kind); setMessage("");
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData.user;
+    if (!user) { setUploading(null); return setMessage("Please sign in again before uploading."); }
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+    const path = `${user.id}/${kind}/${crypto.randomUUID()}-${safeName}`;
+    const { error: storageError } = await supabase.storage.from("prompt-documents").upload(path, file, { contentType: file.type || "application/octet-stream" });
+    if (storageError) { setUploading(null); return setMessage(storageError.message); }
+    const { error: dbError } = await supabase.from("prompt_documents").insert({ user_id: user.id, kind, file_name: file.name, storage_path: path, mime_type: file.type || null, file_size: file.size });
+    if (dbError) { await supabase.storage.from("prompt-documents").remove([path]); setMessage(dbError.message); } else { setMessage(`${file.name} is ready to guide future prompts.`); await loadDocuments(); }
+    setUploading(null);
+  };
+  const card = (kind: "icp" | "voice_guide", title: string, description: string) => {
+    const docs = documents.filter((doc) => doc.kind === kind);
+    return <article className="guidance-card"><span className="guidance-icon"><FiBookOpen /></span><h2>{title}</h2><p>{description}</p><label className="button primary wide"><FiUploadCloud /> {uploading === kind ? "Uploading…" : `Upload ${title}`}<input hidden type="file" accept=".pdf,.txt,.doc,.docx,application/pdf,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={Boolean(uploading)} onChange={(e) => { void upload(kind, e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>PDF, DOCX, DOC, or TXT · 10 MB max · private to your workspace</small>{docs.length > 0 ? <div className="document-list">{docs.map((doc) => <div key={doc.id}><FiFileText /> <span>{doc.file_name}</span><FiCheck /></div>)}</div> : <div className="document-empty">No file uploaded yet.</div>}</article>;
+  };
+  return <section><header className="page-header"><div><h1>Prompt guidance</h1><p>Upload the source documents that define who we are talking to and how Hank and the squirrel should sound.</p></div></header><div className="guidance-grid">{card("icp", "ICP", "Your ideal customer profile: priorities, problems, context, and the emotional reality each post should recognize.")}{card("voice_guide", "GSD Voice", "Your tone, language, character rules, and creative guardrails. These will be injected into research and production prompts.")}</div>{message && <p className="guidance-message">{message}</p>}<div className="panel guidance-note"><FiCheck /><div><b>Private by default</b><p>These documents are stored in a private Supabase bucket. Only your signed-in workspace can access them.</p></div></div></section>;
+}
+
 function Dashboard({
   items,
+  discover,
   select,
   onProduce,
   onDiscard,
 }: {
   items: Story[];
+  discover: () => void;
   select: (id: string) => void;
   onProduce: (id: string) => void;
   onDiscard: (id: string) => void;
@@ -322,7 +307,7 @@ function Dashboard({
           <h1>Your story queue</h1>
           <p>High-potential stories, ranked for the GSD audience.</p>
         </div>
-        <button className="button primary">
+        <button className="button primary" onClick={discover}>
           <FiPlus /> Find fresh stories
         </button>
       </header>
@@ -361,6 +346,7 @@ function Dashboard({
           <span>Post type</span>
           <span>Actions</span>
         </div>
+        {shown.length === 0 && <div className="empty-queue"><FiCompass /><h2>No stories in your queue yet</h2><p>Use Discover to find fresh, high-fit stories. Your discarded items remain protected from duplicates.</p><button className="button primary" onClick={discover}>Find fresh stories</button></div>}
         {shown.map((item) => (
           <div className="story-row" key={item.id}>
             <div>
@@ -851,23 +837,7 @@ function Archive({
   items: Story[];
   restore: (id: string) => void;
 }) {
-  const rows = useMemo(
-    () =>
-      items.length
-        ? items
-        : [
-            {
-              id: "demo-archive",
-              title: "A generic hustle-culture listicle",
-              overview: "",
-              category: "Productivity Tip",
-              score: 45,
-              type: "",
-              status: "Archived",
-            } as Story,
-          ],
-    [items],
-  );
+  const rows = useMemo(() => items, [items]);
   return (
     <section>
       <header className="page-header">
@@ -899,6 +869,7 @@ function Archive({
             </button>
           </div>
           <div className="archive-table">
+            {rows.length === 0 && <div className="empty-queue"><FiArchive /><h2>Your archive is empty</h2><p>Discarded stories will stay here so they are not suggested again.</p></div>}
             {rows.map((r, i) => (
               <div className="archive-row" key={r.id}>
                 <div>
