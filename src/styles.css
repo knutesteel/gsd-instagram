@@ -168,6 +168,7 @@ button {
   gap: 8px;
   font-weight: 600;
 }
+.filter-row select { border: 1px solid #dad5c9; background: #fff; border-radius: 9px; padding: 10px 13px; color: #4c4b45; }
 .button.primary {
   background: #c85032;
   color: white;
@@ -417,6 +418,10 @@ button {
   color: #4e5939;
   font-size: 13px;
 }
+.chips button { display: grid; place-items: center; color: inherit; padding: 0; }
+.topic-add { display: flex; gap: 8px; margin: -9px 0 18px; }
+.topic-add input { min-width: 0; flex: 1; border: 1px solid #d7d2c9; border-radius: 8px; padding: 10px; }
+.topic-add button { border: 1px solid #d7d2c9; border-radius: 8px; padding: 9px 12px; display: inline-flex; align-items: center; gap: 5px; }
 .requirements h2,
 .progress h2,
 .asset-editor h2,
@@ -561,6 +566,9 @@ button {
 .field textarea.tall {
   min-height: 250px;
 }
+.field textarea.expanded { min-height: 190px; }
+.field textarea.caption-editor { min-height: 180px; }
+.field textarea.voice-editor { min-height: 270px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .produce-head h1 {
   font-size: 34px;
 }
@@ -989,11 +997,3 @@ button {
     grid-template-columns: 1fr;
   }
   .archive-row {
-    grid-template-columns: 1fr;
-  }
-  .progress-row {
-    grid-template-columns: 30px 1fr;
-  }
-  .progress-row p,
-  .progress-row small {
-    grid-column: 2;
