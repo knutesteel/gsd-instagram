@@ -19,6 +19,10 @@ body {
 .auth-card > p { color: #65635d; line-height: 1.55; margin-bottom: 28px; }
 .auth-card .field { margin: 18px 0; }
 .auth-message { color: #52612e !important; margin: 18px 0 0 !important; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin: 22px 0 0; color: #847f75; font-size: 12px; }
+.auth-divider::before, .auth-divider::after { content: ""; height: 1px; background: #e4ddd3; flex: 1; }
+.google-button { margin-top: 14px !important; }
+.google-mark { color: #4285f4; font-weight: 800; font-family: Arial, sans-serif; font-size: 17px; }
 button,
 input,
 textarea,
@@ -993,7 +997,3 @@ button {
   .post-image {
     height: 470px;
   }
-  .archive-metrics {
-    grid-template-columns: 1fr;
-  }
-  .archive-row {
