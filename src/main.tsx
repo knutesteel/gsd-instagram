@@ -44,6 +44,7 @@ type Story = {
   status: "New" | "Produced" | "Ready" | "Posted" | "Archived";
 };
 type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, string>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
+type GeneratedAsset = { id: string; sequence: number; storage_path: string; url: string };
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -54,6 +55,7 @@ function App() {
   const [caption, setCaption] = useState("");
   const [concept, setConcept] = useState<Concept | null>(null);
   const [change, setChange] = useState("");
+  const [productionRequest, setProductionRequest] = useState(0);
   const [toast, setToast] = useState("");
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [userId, setUserId] = useState<string | null>(null);
@@ -106,13 +108,30 @@ function App() {
     );
     setScreen("dashboard");
   };
+  const generateAssets = async (articleId: string, requestedChange = "", sequence?: number) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const client = supabase;
+    const { data } = await client.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/produce", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
+      body: JSON.stringify({ articleId, requestedChange, sequence }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "Couldn’t generate assets.");
+    const assets = await Promise.all((result.assets ?? []).map(async (asset: Omit<GeneratedAsset, "url">) => {
+      const { data: signed, error } = await client.storage.from("post-assets").createSignedUrl(asset.storage_path, 60 * 60);
+      if (error || !signed?.signedUrl) throw new Error(error?.message ?? "Couldn’t prepare generated image.");
+      return { ...asset, url: signed.signedUrl } as GeneratedAsset;
+    }));
+    setItems((old) => old.map((item) => item.id === articleId ? { ...item, status: "Produced" } : item));
+    void updateStatus(articleId, "produced");
+    return assets as GeneratedAsset[];
+  };
   const produce = () => {
-    setItems((old) =>
-      old.map((i) => (i.id === selected ? { ...i, status: "Produced" } : i)),
-    );
-    void updateStatus(selected, "produced");
     setScreen("produce");
-    notify("Production workspace opened.");
+    setProductionRequest((request) => request + 1);
   };
   const navigate = (next: number) => {
     const index = items.findIndex((i) => i.id === selected);
@@ -219,6 +238,10 @@ function App() {
         {screen === "produce" && (
           <Produce
             story={active}
+            productionRequest={productionRequest}
+            generateAssets={generateAssets}
+            caption={caption}
+            setCaption={setCaption}
             change={change}
             setChange={setChange}
             onPreview={() => setScreen("preview")}
@@ -668,18 +691,62 @@ function Field({
 }
 function Produce({
   story,
+  productionRequest,
+  generateAssets,
+  caption,
+  setCaption,
   change,
   setChange,
   onPreview,
   notify,
 }: {
   story: Story;
+  productionRequest: number;
+  generateAssets: (articleId: string, requestedChange?: string, sequence?: number) => Promise<GeneratedAsset[]>;
+  caption: string;
+  setCaption: (value: string) => void;
   change: string;
   setChange: (s: string) => void;
   onPreview: () => void;
   notify: (m: string) => void;
 }) {
-  const [active, setActive] = useState(2);
+  const [assets, setAssets] = useState<GeneratedAsset[]>([]);
+  const [active, setActive] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    if (!productionRequest) return;
+    setLoading(true);
+    setError("");
+    setAssets([]);
+    setActive(0);
+    generateAssets(story.id)
+      .then((created) => {
+        setAssets(created.sort((a, b) => a.sequence - b.sequence));
+        notify(`${created.length} carousel asset${created.length === 1 ? "" : "s"} generated.`);
+      })
+      .catch((generationError: Error) => setError(generationError.message))
+      .finally(() => setLoading(false));
+  }, [productionRequest, story.id]);
+  const current = assets[active];
+  const regenerate = async () => {
+    if (!current) return;
+    setLoading(true);
+    setError("");
+    try {
+      const [replacement] = await generateAssets(story.id, change, current.sequence);
+      if (!replacement) throw new Error("No replacement image was returned.");
+      setAssets((previous) => previous.map((asset) => asset.sequence === replacement.sequence ? replacement : asset));
+      setChange("");
+      notify(`Panel ${current.sequence} regenerated.`);
+    } catch (generationError) {
+      setError(generationError instanceof Error ? generationError.message : "Couldn’t regenerate this panel.");
+    } finally {
+      setLoading(false);
+    }
+  };
+  const previous = () => setActive((index) => (index - 1 + assets.length) % assets.length);
+  const next = () => setActive((index) => (index + 1) % assets.length);
   return (
     <section>
       <header className="produce-head">
@@ -687,7 +754,7 @@ function Produce({
           <h1>
             Produce carousel{" "}
             <span className="ready">
-              <FiCheck /> Assets ready
+              {loading ? <FiRefreshCw /> : <FiCheck />} {loading ? "Generating assets…" : assets.length ? "Assets ready" : "Preparing assets"}
             </span>
           </h1>
           <p>
@@ -708,24 +775,21 @@ function Produce({
       </header>
       <div className="production-layout">
         <div>
-          <div className="asset-strip">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <button
-                key={n}
-                className={active === n ? "asset selected" : "asset"}
-                onClick={() => setActive(n)}
-              >
-                <img
-                  src="/assets/carousel-production.png"
-                  alt={`Generated carousel panel ${n}`}
-                />
-                <span>{n}</span>
-              </button>
-            ))}
+          <div style={{ position: "relative", minHeight: 460, borderRadius: 18, overflow: "hidden", background: "#e9e8df", display: "grid", placeItems: "center" }}>
+            {current ? <img src={current.url} alt={`Generated carousel panel ${current.sequence}`} style={{ display: "block", width: "100%", height: 520, objectFit: "contain", background: "#171a16" }} /> : <p style={{ color: "#5c604f" }}>{loading ? "Creating your Hank and squirrel carousel…" : "No generated assets yet."}</p>}
+            {assets.length > 1 && <>
+              <button aria-label="Previous image" onClick={previous} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", width: 42, height: 42, borderRadius: "50%", border: 0, background: "rgba(255,255,255,.92)", fontSize: 22 }}><FiArrowLeft /></button>
+              <button aria-label="Next image" onClick={next} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", width: 42, height: 42, borderRadius: "50%", border: 0, background: "rgba(255,255,255,.92)", fontSize: 22 }}><FiArrowRight /></button>
+              <span style={{ position: "absolute", right: 16, bottom: 14, padding: "5px 10px", borderRadius: 999, background: "rgba(0,0,0,.7)", color: "white", fontSize: 13 }}>{active + 1} / {assets.length}</span>
+            </>}
           </div>
+          <div style={{ display: "flex", gap: 10, paddingTop: 12, overflowX: "auto" }}>
+            {assets.map((asset, index) => <button key={asset.id} aria-label={`Show panel ${asset.sequence}`} onClick={() => setActive(index)} style={{ padding: 0, border: index === active ? "3px solid #d05335" : "3px solid transparent", background: "transparent", borderRadius: 8, height: 82, width: 62, flex: "0 0 auto", overflow: "hidden" }}><img src={asset.url} alt="" style={{ display: "block", width: "100%", height: "100%", objectFit: "cover" }} /></button>)}
+          </div>
+          {error && <p style={{ color: "#b5362b", margin: "12px 0 0" }}>{error}</p>}
           <div className="copy-grid">
             <Field label="Post text">
-              <textarea placeholder="Generated post text will appear here." />
+              <textarea value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="Generated post text will appear here." />
             </Field>
             <div className="field hash-field">
               <b>Suggested hashtags</b>
@@ -740,7 +804,7 @@ function Produce({
           </div>
         </div>
         <aside className="asset-editor">
-          <h2>Asset {active} of 5</h2>
+          <h2>Asset {assets.length ? active + 1 : 0} of {assets.length || "—"}</h2>
           <div className="tabs">
             <button className="on">Generated</button>
             <button>Upload replacement</button>
@@ -754,12 +818,10 @@ function Produce({
           </Field>
           <button
             className="button primary wide"
-            onClick={() => {
-              setChange("");
-              notify("Panel regeneration started with your requested change.");
-            }}
+            onClick={regenerate}
+            disabled={loading || !current}
           >
-            <FiRefreshCw /> Regenerate
+            <FiRefreshCw /> {loading ? "Generating…" : "Regenerate"}
           </button>
           <button className="button wide">
             <FiUploadCloud /> Replace with upload
