@@ -26,3 +26,4 @@ Import the GitHub repository into Vercel. The included `vercel.json` builds the 
 ## Current scope
 
 This is an interactive frontend MVP with seeded content. Live web research, article extraction, asset-generation providers, user authentication, and persistent storage are intentionally not wired in yet.
+Deployment trigger
