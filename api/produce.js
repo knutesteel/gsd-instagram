@@ -36,9 +36,12 @@ export default async function handler(req, res) {
   const concepts = conceptResponse.ok ? await conceptResponse.json() : [];
   const concept = concepts[0];
   if (!concept) return res.status(404).json({ error: "Create an article concept before producing assets." });
-  const guideResponse = await fetch(`${supabaseUrl}/rest/v1/prompt_documents?select=kind,text_content&is_active=eq.true`, { headers: auth });
+  const guideResponse = await fetch(`${supabaseUrl}/rest/v1/prompt_documents?select=kind,text_content,created_at&is_active=eq.true&order=created_at.desc`, { headers: auth });
   const guides = guideResponse.ok ? await guideResponse.json() : [];
   const guide = (kind) => guides.find((item) => item.kind === kind)?.text_content ?? "";
+  const voiceGuide = guide("voice_guide");
+  const visualGuide = guide("visual_guide");
+  if (!voiceGuide.trim() || !visualGuide.trim()) return res.status(422).json({ error: "Upload and save both a GSD Voice and Visual Guide before generating assets." });
   const count = Math.min(Math.max(concept.panel_count || 1, 1), 5);
   const sequences = requestedSequence
     ? [Math.min(Math.max(Number(requestedSequence) || 1, 1), count)]
@@ -55,7 +58,26 @@ export default async function handler(req, res) {
   }
   for (const sequence of sequences) {
     const content = concept.image_summary?.content ?? "";
-    const prompt = `Create only Instagram carousel panel ${sequence} of ${count}, vertical 4:5. This is a Hank-and-the-squirrel conversation about the article, never a standalone infographic or generic scene.\n\nCURRENT PANEL BRIEF (follow exactly):\n${panelBrief(content, sequence)}\n\nNON-NEGOTIABLE CHARACTER CONTINUITY: Hank and the squirrel must both appear in this panel. Preserve the same Hank, squirrel, outfits, body proportions, illustration style, desk/room, lighting, and color palette throughout the carousel. Do not redesign either character. Use the exact spoken dialog from the panel brief in legible speech bubbles.\n\nConsistency brief: ${concept.image_summary?.consistency ?? ""}\nSetting: ${concept.image_summary?.setting ?? ""}\nGSD Voice: ${guide("voice_guide")}\nVisual Guide: ${guide("visual_guide")}\n${reference ? "The attached previous panel is the visual source of truth. Keep both characters and the setting visually identical; change only the action required by the current panel." : "This is the master character-and-setting reference panel for the carousel."}\n${requestedChange ? `Requested change: ${requestedChange}` : ""}`;
+    const prompt = `Create only Instagram carousel panel ${sequence} of ${count}, vertical 4:5. This is a Hank-and-the-squirrel conversation about the article, never a standalone infographic or generic scene.
+
+CURRENT PANEL BRIEF — follow exactly:
+${panelBrief(content, sequence)}
+
+NON-NEGOTIABLE CHARACTER CONTINUITY: Hank and the squirrel must both appear in this panel. Preserve the same Hank, squirrel, outfits, body proportions, illustration style, desk/room, lighting, and color palette throughout the carousel. Do not redesign either character. Use the exact spoken dialog from the panel brief in legible speech bubbles.
+
+Consistency brief: ${concept.image_summary?.consistency ?? ""}
+Setting: ${concept.image_summary?.setting ?? ""}
+
+===== FULL GSD VOICE GUIDE — HIGHEST PRIORITY =====
+${voiceGuide}
+===== END GSD VOICE GUIDE =====
+
+===== FULL VISUAL / IMAGE GUIDE — HIGHEST PRIORITY =====
+${visualGuide}
+===== END VISUAL / IMAGE GUIDE =====
+
+${reference ? "The attached previous panel is the visual source of truth. Preserve it exactly for characters, wardrobe, setting, proportions, art style, and palette; change only the panel action and dialogue." : "This is the master character-and-setting reference panel for the carousel. Establish the Visual Guide precisely so it can anchor every later panel."}
+${requestedChange ? `Requested change: ${requestedChange}` : ""}`;
     const imageResponse = await createImage(openaiKey, prompt, reference);
     if (!imageResponse.ok) return res.status(502).json({ error: `Image provider error: ${await imageResponse.text()}` });
     const image = await imageResponse.json();
