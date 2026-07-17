@@ -73,7 +73,7 @@ export default async function handler(req, res) {
 CURRENT PANEL BRIEF — follow exactly:
 ${panelBrief(content, sequence)}
 
-NON-NEGOTIABLE CHARACTER CONTINUITY: Hank and the squirrel must both appear in this panel. Preserve the same Hank, squirrel, outfits, body proportions, illustration style, desk/room, lighting, and color palette throughout the carousel. Do not redesign either character. Use the exact spoken dialog from the panel brief in legible speech bubbles.
+NON-NEGOTIABLE CHARACTER CONTINUITY: Hank and the squirrel must both appear in this panel as the same approved characters from the saved Image Prompt. Hank is a raccoon, never a human. Preserve the same characters, outfits, body proportions, illustration style, desk/room, lighting, palette, and scene geography throughout the carousel. Carry recurring props forward logically: do not make an object vanish, switch hands, or change state without an on-panel reason. Do not redesign either character. Use the exact Hank and the squirrel dialogue from the panel brief in two separate, legible speech bubbles connected to the correct speaker. Never replace their conversation with narration, text overlays, or a one-character panel.
 
 ARTICLE-SPECIFIC SETTING: ${concept.image_summary?.setting ?? ""}
 
