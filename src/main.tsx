@@ -40,6 +40,7 @@ type Story = {
   overview: string;
   category: string;
   score: number;
+  url?: string;
   type: string;
   status: "New" | "Produced" | "Ready" | "Posted" | "Archived";
 };
@@ -85,9 +86,9 @@ function App() {
   }, []);
   useEffect(() => {
     if (!supabase || !userId) return;
-    supabase.from("articles").select("id,title,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data, error }) => {
+    supabase.from("articles").select("id,title,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
@@ -133,6 +134,26 @@ function App() {
     setScreen("produce");
     setProductionRequest((request) => request + 1);
   };
+  const saveDetail = async (articleId: string, values: { title: string; url: string; score: number; postType: string; panelCount: number; consistency: string; setting: string; content: string; caption: string; prompt: string }) => {
+    if (!supabase) return;
+    const articleUpdate = await supabase.from("articles").update({ title: values.title, source_url: values.url, canonical_url: values.url, rank: values.score }).eq("id", articleId);
+    if (articleUpdate.error) throw new Error(articleUpdate.error.message);
+    const conceptUpdate = await supabase.from("post_concepts").update({ post_type: values.postType, panel_count: values.panelCount, image_summary: { consistency: values.consistency, setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption }).eq("article_id", articleId);
+    if (conceptUpdate.error) throw new Error(conceptUpdate.error.message);
+    setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, score: values.score, type: values.postType } : item));
+    setCaption(values.caption);
+    await loadConcept(articleId);
+  };
+  const generatePrompt = async (articleId: string, values: Record<string, unknown>) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/generate-prompt", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ articleId, ...values }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "Couldn’t generate the prompt.");
+    await loadConcept(articleId);
+    return result.prompt as string;
+  };
   const navigate = (next: number) => {
     const index = items.findIndex((i) => i.id === selected);
     setSelected(items[(index + next + items.length) % items.length].id);
@@ -144,8 +165,8 @@ function App() {
     const response = await fetch("/api/research", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify(payload) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
-    await supabase.from("articles").select("id,title,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
+    await supabase.from("articles").select("id,title,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data: rows }) => {
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -227,8 +248,10 @@ function App() {
           <Detail
             story={active}
             concept={concept}
-            caption={caption}
-            setCaption={setCaption}
+            saveDetail={saveDetail}
+            generatePrompt={generatePrompt}
+            reanalyze={() => research({ mode: "manual", manualUrl: active.url }).then(() => loadConcept(active.id))}
+            notify={notify}
             previous={() => navigate(-1)}
             next={() => navigate(1)}
             produce={produce}
@@ -589,22 +612,33 @@ function Requirement({ title, text }: { title: string; text: string }) {
 function Detail({
   story,
   concept,
-  caption,
-  setCaption,
   previous,
   next,
   produce,
   discard,
+  saveDetail,
+  generatePrompt,
+  reanalyze,
+  notify,
 }: {
   story: Story;
   concept: Concept | null;
-  caption: string;
-  setCaption: (s: string) => void;
   previous: () => void;
   next: () => void;
   produce: () => void;
   discard: () => void;
+  saveDetail: (id: string, values: DetailValues) => Promise<void>;
+  generatePrompt: (id: string, values: Record<string, unknown>) => Promise<string>;
+  reanalyze: () => Promise<unknown>;
+  notify: (message: string) => void;
 }) {
+  const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
+  const [busy, setBusy] = useState("");
+  useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
+  const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
+  const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
+  const prompt = async () => { setBusy("prompt"); try { const generated = await generatePrompt(story.id, values); setValues((old) => ({ ...old, prompt: generated })); notify("Full production prompt generated from your saved guidance."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t generate the prompt."); } finally { setBusy(""); } };
+  const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
   return (
     <section>
       <div className="detail-top">
@@ -621,6 +655,9 @@ function Detail({
           <button onClick={discard}>
             <FiTrash2 /> Discard
           </button>
+          <button onClick={rerun} disabled={Boolean(busy)}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : "Regenerate analysis"}</button>
+          <button onClick={prompt} disabled={Boolean(busy)}><FiFileText /> {busy === "prompt" ? "Generating…" : "Generate prompt"}</button>
+          <button onClick={save} disabled={Boolean(busy)}><FiCheck /> {busy === "save" ? "Saving…" : "Save changes"}</button>
           <button className="button primary" onClick={produce}>
             Produce
           </button>
@@ -629,51 +666,27 @@ function Detail({
       <h1>Article detail</h1>
       <div className="detail-grid">
         <div className="left-fields">
-          <div className="source">
-            <FiExternalLink />
-            <span>Source URL saved with this article</span>
-          </div>
-          <Field label="Article summary">
-            <textarea value={concept?.summary ?? story.overview} readOnly />
-          </Field>
-          <Field label="Post type">
-            <select value={concept?.post_type ?? story.type} disabled>
-              <option>Carousel</option>
-              <option>Reel</option>
-              <option>Single image</option>
-            </select>
-          </Field>
-          <Field label="Panels"><input value={String(concept?.panel_count ?? "")} readOnly /></Field>
-          <Field label="Image summary">
-            <textarea
-              className="expanded"
-              value={concept?.image_summary ? Object.entries(concept.image_summary).map(([key, value]) => `${key.replaceAll("_", " ")}: ${value}`).join("\n") : ""}
-              readOnly
-            />
-          </Field>
+          <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
+          <Field label="URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
+          <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
+          <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="Carousel">Five-panel Instagram carousel</option><option value="Single image">Single image</option><option value="Reel">Reel</option></select></Field>
+          <Field label="Panels"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
         </div>
         <div className="right-fields">
-          <Field label="Detailed production prompt">
-            <textarea
-              className="tall"
-              value={concept?.detailed_prompt ?? ""}
-              readOnly
-            />
-          </Field>
-          <Field label="Caption">
-            <textarea
-              className="caption-editor"
-              value={caption}
-              onChange={(e) => setCaption(e.target.value)}
-            />
-          </Field>
-          <Field label="Suggested hashtags">
-            <input value={concept?.hashtags?.join(", ") ?? ""} readOnly />
-          </Field>
+          <Field label="Consistency"><textarea className="expanded" value={values.consistency} onChange={(e) => update("consistency", e.target.value)} /></Field>
+          <Field label="Setting"><textarea className="expanded" value={values.setting} onChange={(e) => update("setting", e.target.value)} /></Field>
+          <Field label="Content"><textarea className="tall" value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
+          <Field label="Full production prompt"><textarea className="tall" value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field>
+          <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
         </div>
       </div>
     </section>
   );
+}
+type DetailValues = { title: string; url: string; score: number; postType: string; panelCount: number; consistency: string; setting: string; content: string; prompt: string; caption: string };
+function detailValues(story: Story, concept: Concept | null): DetailValues {
+  const image = concept?.image_summary ?? {};
+  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, consistency: image.consistency ?? "Keep Hank and the squirrel’s clothing, proportions, expressions, and setting consistent through every panel.", setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content: image.content ?? concept?.detailed_prompt ?? "", prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "" };
 }
 function Field({
   label,
