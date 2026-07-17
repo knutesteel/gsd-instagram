@@ -656,7 +656,6 @@ function Detail({
             <FiTrash2 /> Discard
           </button>
           <button onClick={rerun} disabled={Boolean(busy)}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : "Regenerate analysis"}</button>
-          <button onClick={prompt} disabled={Boolean(busy)}><FiFileText /> {busy === "prompt" ? "Generating…" : "Generate prompt"}</button>
           <button onClick={save} disabled={Boolean(busy)}><FiCheck /> {busy === "save" ? "Saving…" : "Save changes"}</button>
           <button className="button primary" onClick={produce}>
             Produce
@@ -676,7 +675,8 @@ function Detail({
           <Field label="Consistency"><textarea className="expanded" value={values.consistency} onChange={(e) => update("consistency", e.target.value)} /></Field>
           <Field label="Setting"><textarea className="expanded" value={values.setting} onChange={(e) => update("setting", e.target.value)} /></Field>
           <Field label="Content"><textarea className="tall" value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
-          <Field label="Full production prompt"><textarea className="tall" value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field>
+          <button className="button primary" onClick={prompt} disabled={Boolean(busy)} style={{ marginBottom: 18 }}><FiFileText /> {busy === "prompt" ? "Generating prompt…" : "Generate prompt"}</button>
+          {values.prompt && <Field label="Full production prompt"><textarea className="tall" value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field>}
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
         </div>
       </div>
@@ -686,7 +686,7 @@ function Detail({
 type DetailValues = { title: string; url: string; score: number; postType: string; panelCount: number; consistency: string; setting: string; content: string; prompt: string; caption: string };
 function detailValues(story: Story, concept: Concept | null): DetailValues {
   const image = concept?.image_summary ?? {};
-  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, consistency: image.consistency ?? "Keep Hank and the squirrel’s clothing, proportions, expressions, and setting consistent through every panel.", setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content: image.content ?? concept?.detailed_prompt ?? "", prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "" };
+  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, consistency: image.consistency ?? "Keep Hank and the squirrel’s clothing, proportions, expressions, and setting consistent through every panel.", setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content: image.content ?? concept?.detailed_prompt ?? "", prompt: "", caption: concept?.caption ?? "" };
 }
 function Field({
   label,
