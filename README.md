@@ -1,5 +1,7 @@
 # GSD Instagram
 
+<!-- Deployment trigger: GitHub ↔ Vercel connection refreshed. -->
+
 An interactive frontend prototype for reviewing fresh stories and creating Instagram post concepts featuring Hank and the squirrel.
 
 ## Included flows
