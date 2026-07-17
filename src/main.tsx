@@ -666,16 +666,16 @@ function Detail({
           <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="Carousel">Five-panel Instagram carousel</option><option value="Single image">Single image</option><option value="Reel">Reel</option></select></Field>
           <Field label="Panels"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
           <Field label="Consistency"><textarea className="expanded" value={values.consistency} onChange={(e) => update("consistency", e.target.value)} /></Field>
-          <Field label="Setting"><textarea className="expanded" value={values.setting} onChange={(e) => update("setting", e.target.value)} /></Field>
-        </div>
-        <div className="right-fields">
-          <Field label="Content"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
-          <button className="button primary" onClick={prompt} disabled={Boolean(busy)} style={{ marginBottom: 18 }}><FiFileText /> {busy === "prompt" ? "Generating prompt…" : "Generate prompt"}</button>
-          {values.prompt && <Field label="Full production prompt"><textarea className="tall" value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field>}
+          <Field label="Setting"><textarea style={{ minHeight: 95 }} value={values.setting} onChange={(e) => update("setting", e.target.value)} /></Field>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
           <Field label="Recommended hashtags · 3–5"><textarea style={{ minHeight: 100 }} value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field>
         </div>
+        <div className="right-fields">
+          <Field label="Content"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
+          <button className="button primary wide" onClick={prompt} disabled={Boolean(busy)}><FiFileText /> {busy === "prompt" ? "Generating prompt…" : values.prompt ? "Regenerate Prompt" : "Generate Prompt"}</button>
+        </div>
       </div>
+      {values.prompt && <div style={{ marginTop: 28 }}><Field label="Full production prompt"><textarea className="tall" style={{ minHeight: 420, lineHeight: 1.65 }} value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field></div>}
     </section>
   );
 }
