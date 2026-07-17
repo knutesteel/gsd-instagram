@@ -41,7 +41,7 @@ type Story = {
   category: string;
   score: number;
   type: string;
-  status: "Proposed" | "Produced" | "Archived";
+  status: "New" | "Produced" | "Ready" | "Posted" | "Archived";
 };
 type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, string>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
 
@@ -58,7 +58,7 @@ function App() {
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [userId, setUserId] = useState<string | null>(null);
   const active = items.find((i) => i.id === selected) ?? items[0];
-  const proposed = items.filter((i) => i.status === "Proposed");
+  const proposed = items.filter((i) => i.status !== "Archived");
   const loadConcept = async (articleId: string) => {
     if (!supabase || !articleId) return;
     const { data } = await supabase.from("post_concepts").select("summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags").eq("article_id", articleId).maybeSingle();
@@ -85,13 +85,13 @@ function App() {
     if (!supabase || !userId) return;
     supabase.from("articles").select("id,title,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
   }, [userId]);
   useEffect(() => { void loadConcept(selected); }, [selected]);
-  const updateStatus = async (id: string, status: "discarded" | "produced") => {
+  const updateStatus = async (id: string, status: "discarded" | "new" | "produced" | "ready" | "posted") => {
     if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
     if (error) notify(`Couldn’t save change: ${error.message}`);
@@ -104,13 +104,13 @@ function App() {
     notify(
       "Article moved to Archive and protected from future duplicate searches.",
     );
-    void updateStatus(selected, "produced");
     setScreen("dashboard");
   };
   const produce = () => {
     setItems((old) =>
       old.map((i) => (i.id === selected ? { ...i, status: "Produced" } : i)),
     );
+    void updateStatus(selected, "produced");
     setScreen("produce");
     notify("Production workspace opened.");
   };
@@ -126,7 +126,7 @@ function App() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
     await supabase.from("articles").select("id,title,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -192,6 +192,7 @@ function App() {
               produce();
             }}
             onDiscard={discard}
+            onStatus={(id, status) => { setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item)); void updateStatus(id, status.toLowerCase() as "new" | "produced" | "ready" | "posted"); }}
           />
         )}
         {screen === "discover" && (
@@ -237,7 +238,7 @@ function App() {
             restore={(id) => {
               setItems((old) =>
                 old.map((i) =>
-                  i.id === id ? { ...i, status: "Proposed" } : i,
+                  i.id === id ? { ...i, status: "New" } : i,
                 ),
               );
               notify("Restored to the story queue.");
@@ -334,12 +335,14 @@ function Dashboard({
   select,
   onProduce,
   onDiscard,
+  onStatus,
 }: {
   items: Story[];
   discover: () => void;
   select: (id: string) => void;
   onProduce: (id: string) => void;
   onDiscard: (id: string) => void;
+  onStatus: (id: string, status: Exclude<Story["status"], "Archived">) => void;
 }) {
   const [filter, setFilter] = useState("");
   const [category, setCategory] = useState("all");
@@ -383,6 +386,7 @@ function Dashboard({
           <span>Category</span>
           <span>Score</span>
           <span>Post type</span>
+          <span>Status</span>
           <span>Actions</span>
         </div>
         {shown.length === 0 && <div className="empty-queue"><FiCompass /><h2>No stories in your queue yet</h2><p>Use Discover to find fresh, high-fit stories. Your discarded items remain protected from duplicates.</p><button className="button primary" onClick={discover}>Find fresh stories</button></div>}
@@ -395,6 +399,7 @@ function Dashboard({
             <span className="chip">{item.category}</span>
             <span className="score">{item.score}</span>
             <span className="type">{item.type}</span>
+            <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Produced</option><option>Ready</option><option>Posted</option></select>
             <div className="actions">
               <button onClick={() => select(item.id)}>Edit</button>
               <button className="outline" onClick={() => onProduce(item.id)}>
