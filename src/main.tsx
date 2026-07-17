@@ -43,6 +43,7 @@ type Story = {
   type: string;
   status: "Proposed" | "Produced" | "Archived";
 };
+type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, string>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -51,12 +52,19 @@ function App() {
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
   const [caption, setCaption] = useState("");
+  const [concept, setConcept] = useState<Concept | null>(null);
   const [change, setChange] = useState("");
   const [toast, setToast] = useState("");
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [userId, setUserId] = useState<string | null>(null);
   const active = items.find((i) => i.id === selected) ?? items[0];
   const proposed = items.filter((i) => i.status === "Proposed");
+  const loadConcept = async (articleId: string) => {
+    if (!supabase || !articleId) return;
+    const { data } = await supabase.from("post_concepts").select("summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags").eq("article_id", articleId).maybeSingle();
+    setConcept(data as Concept | null);
+    setCaption(data?.caption ?? "");
+  };
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
@@ -82,6 +90,7 @@ function App() {
       if (saved[0]) setSelected(saved[0].id);
     });
   }, [userId]);
+  useEffect(() => { void loadConcept(selected); }, [selected]);
   const updateStatus = async (id: string, status: "discarded" | "produced") => {
     if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
@@ -120,7 +129,7 @@ function App() {
       const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" || row.status === "removed" ? "Archived" : row.status === "produced" || row.status === "ready" ? "Produced" : "Proposed") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
-    return result.count as number;
+    return result as { count: number; articleIds?: string[] };
   };
   if (!authReady) return <div className="auth-page"><div className="auth-card">Loading your workspace…</div></div>;
   if (supabaseConfigured && !userId) return <AuthGate />;
@@ -175,6 +184,7 @@ function App() {
             discover={() => setScreen("discover")}
             select={(id) => {
               setSelected(id);
+              void loadConcept(id);
               setScreen("detail");
             }}
             onProduce={(id) => {
@@ -190,11 +200,13 @@ function App() {
             setSearching={setSearching}
             notify={notify}
             research={research}
+            onManualComplete={(id) => { setSelected(id); void loadConcept(id); setScreen("detail"); }}
           />
         )}
         {screen === "detail" && (
           <Detail
             story={active}
+            concept={concept}
             caption={caption}
             setCaption={setCaption}
             previous={() => navigate(-1)}
@@ -419,11 +431,13 @@ function Discover({
   setSearching,
   notify,
   research,
+  onManualComplete,
 }: {
   searching: boolean;
   setSearching: (v: boolean) => void;
   notify: (m: string) => void;
-  research: (payload: Record<string, unknown>) => Promise<number>;
+  research: (payload: Record<string, unknown>) => Promise<{ count: number; articleIds?: string[] }>;
+  onManualComplete: (id: string) => void;
 }) {
   const [mode, setMode] = useState<"system" | "manual">("system");
   const [manualUrl, setManualUrl] = useState("");
@@ -437,9 +451,10 @@ function Discover({
     if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search phrase or at least one topic.");
     setSearching(true);
     try {
-      const count = await research({ mode, manualUrl: manualUrl.trim(), searchText: searchText.trim(), topics, timeframe: 48 });
+      const result = await research({ mode, manualUrl: manualUrl.trim(), searchText: searchText.trim(), topics, timeframe: 48 });
       setQueued(mode === "manual" ? ["Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
-      notify(`${count} ${count === 1 ? "story" : "stories"} added to your dashboard.`);
+      notify(`${result.count} ${result.count === 1 ? "story" : "stories"} added to your dashboard.`);
+      if (mode === "manual" && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
     } catch (error) { notify(error instanceof Error ? error.message : "Research failed."); }
     finally { setSearching(false); }
   };
@@ -539,6 +554,7 @@ function Requirement({ title, text }: { title: string; text: string }) {
 }
 function Detail({
   story,
+  concept,
   caption,
   setCaption,
   previous,
@@ -547,6 +563,7 @@ function Detail({
   discard,
 }: {
   story: Story;
+  concept: Concept | null;
   caption: string;
   setCaption: (s: string) => void;
   previous: () => void;
@@ -580,23 +597,24 @@ function Detail({
         <div className="left-fields">
           <div className="source">
             <FiExternalLink />
-            <span>https://research.example.com/attention-cost</span>
+            <span>Source URL saved with this article</span>
           </div>
           <Field label="Article summary">
-            <textarea defaultValue={story.overview} />
+            <textarea value={concept?.summary ?? story.overview} readOnly />
           </Field>
           <Field label="Post type">
-            <select defaultValue={story.type}>
+            <select value={concept?.post_type ?? story.type} disabled>
               <option>Carousel</option>
               <option>Reel</option>
               <option>Single image</option>
             </select>
           </Field>
-          <Field label="Panels"><input placeholder="e.g. 5" /></Field>
+          <Field label="Panels"><input value={String(concept?.panel_count ?? "")} readOnly /></Field>
           <Field label="Image summary">
             <textarea
               className="expanded"
-              placeholder="Location, time of day, Hank’s expression, squirrel’s expression…"
+              value={concept?.image_summary ? Object.entries(concept.image_summary).map(([key, value]) => `${key.replaceAll("_", " ")}: ${value}`).join("\n") : ""}
+              readOnly
             />
           </Field>
         </div>
@@ -604,7 +622,8 @@ function Detail({
           <Field label="Detailed production prompt">
             <textarea
               className="tall"
-              placeholder="Generated production prompt will appear here after research."
+              value={concept?.detailed_prompt ?? ""}
+              readOnly
             />
           </Field>
           <Field label="Caption">
@@ -615,7 +634,7 @@ function Detail({
             />
           </Field>
           <Field label="Suggested hashtags">
-            <input placeholder="#hashtags" />
+            <input value={concept?.hashtags?.join(", ") ?? ""} readOnly />
           </Field>
         </div>
       </div>
