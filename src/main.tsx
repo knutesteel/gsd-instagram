@@ -255,6 +255,7 @@ function App() {
             notify={notify}
             previous={() => navigate(-1)}
             next={() => navigate(1)}
+            produce={produce}
             discard={() => discard(active.id)}
           />
         )}
@@ -614,6 +615,7 @@ function Detail({
   concept,
   previous,
   next,
+  produce,
   discard,
   saveDetail,
   generatePrompt,
@@ -624,6 +626,7 @@ function Detail({
   concept: Concept | null;
   previous: () => void;
   next: () => void;
+  produce: () => void;
   discard: () => void;
   saveDetail: (id: string, values: DetailValues) => Promise<void>;
   generatePrompt: (id: string, values: Record<string, unknown>) => Promise<string>;
@@ -675,7 +678,7 @@ function Detail({
           <button className="button primary wide" onClick={prompt} disabled={Boolean(busy)}><FiFileText /> {busy === "prompt" ? "Generating prompt…" : values.prompt ? "Regenerate Prompt" : "Generate Prompt"}</button>
         </div>
       </div>
-      {values.prompt && <div style={{ marginTop: 28 }}><Field label="Full production prompt"><textarea className="tall" style={{ minHeight: 420, lineHeight: 1.65 }} value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field></div>}
+      {values.prompt && <div style={{ marginTop: 28 }}><Field label="Full production prompt"><textarea className="tall" style={{ minHeight: 420, lineHeight: 1.65 }} value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field><button className="button primary wide" style={{ marginTop: 18 }} onClick={produce}><FiImage /> Generate Post</button></div>}
     </section>
   );
 }
