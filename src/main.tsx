@@ -25,6 +25,9 @@ import {
 } from "react-icons/fi";
 import "./styles.css";
 import { supabase, supabaseConfigured } from "./lib/supabase";
+import icpPromptAsset from "./prompt-assets/icp-prompt.md?raw";
+import voicePromptAsset from "./prompt-assets/voice-prompt.md?raw";
+import imagePromptAsset from "./prompt-assets/image-prompt.md?raw";
 
 type Screen =
   | "dashboard"
@@ -347,6 +350,12 @@ function AuthGate() {
 }
 
 type PromptDocument = { id: string; kind: "icp" | "voice_guide" | "visual_guide"; file_name: string; storage_path: string; created_at: string; text_content?: string | null };
+const bundledPromptAssets = {
+  icp: { fileName: "ICP Prompt.md", text: icpPromptAsset },
+  voice_guide: { fileName: "Voice Prompt.md", text: voicePromptAsset },
+  visual_guide: { fileName: "Image Prompt.md", text: imagePromptAsset },
+} as const;
+
 function Guidance() {
   const [documents, setDocuments] = useState<PromptDocument[]>([]);
   const [uploading, setUploading] = useState<"icp" | "voice_guide" | "visual_guide" | null>(null);
@@ -356,10 +365,31 @@ function Guidance() {
   const [visualText, setVisualText] = useState("");
   const [savingVoice, setSavingVoice] = useState(false);
   const [viewing, setViewing] = useState<PromptDocument | null>(null);
-  const loadDocuments = async () => {
+  const [installing, setInstalling] = useState(false);
+  const installBundledPrompts = async (existing: PromptDocument[] = documents) => {
+    if (!supabase || installing) return;
+    const { data: userData } = await supabase.auth.getUser();
+    const user = userData.user;
+    if (!user) return setMessage("Please sign in again before installing the prompt assets.");
+    const missing = (Object.entries(bundledPromptAssets) as Array<[PromptDocument["kind"], { fileName: string; text: string }]>).filter(([, asset]) => !existing.some((document) => document.file_name === asset.fileName));
+    if (!missing.length) return;
+    setInstalling(true);
+    setMessage("");
+    for (const [kind, asset] of missing) {
+      const path = `${user.id}/${kind}/${crypto.randomUUID()}-${asset.fileName.replace(/[^a-zA-Z0-9._-]/g, "-")}`;
+      const file = new File([asset.text], asset.fileName, { type: "text/markdown" });
+      const { error: storageError } = await supabase.storage.from("prompt-documents").upload(path, file, { contentType: "text/markdown" });
+      if (storageError) { setMessage(storageError.message); continue; }
+      const { error: dbError } = await supabase.from("prompt_documents").insert({ user_id: user.id, kind, file_name: asset.fileName, storage_path: path, mime_type: "text/markdown", file_size: file.size, text_content: asset.text });
+      if (dbError) { await supabase.storage.from("prompt-documents").remove([path]); setMessage(dbError.message); }
+    }
+    setInstalling(false);
+    await loadDocuments(false);
+  };
+  const loadDocuments = async (installMissing = true) => {
     if (!supabase) return;
     const { data, error } = await supabase.from("prompt_documents").select("id,kind,file_name,storage_path,created_at,text_content").eq("is_active", true).order("created_at", { ascending: false });
-    if (error) setMessage(error.message); else { const saved = (data ?? []) as PromptDocument[]; setDocuments(saved); setVoiceText(saved.find((doc) => doc.kind === "voice_guide")?.text_content ?? ""); setIcpText(saved.find((doc) => doc.kind === "icp")?.text_content ?? ""); setVisualText(saved.find((doc) => doc.kind === "visual_guide")?.text_content ?? ""); }
+    if (error) setMessage(error.message); else { const saved = (data ?? []) as PromptDocument[]; setDocuments(saved); setVoiceText(saved.find((doc) => doc.kind === "voice_guide")?.text_content ?? ""); setIcpText(saved.find((doc) => doc.kind === "icp")?.text_content ?? ""); setVisualText(saved.find((doc) => doc.kind === "visual_guide")?.text_content ?? ""); if (installMissing) void installBundledPrompts(saved); }
   };
   useEffect(() => { void loadDocuments(); }, []);
   const upload = async (kind: "icp" | "voice_guide" | "visual_guide", file?: File) => {
@@ -391,9 +421,10 @@ function Guidance() {
     const latest = docs[0];
     const text = kind === "voice_guide" ? voiceText : kind === "icp" ? icpText : visualText;
     const setText = kind === "voice_guide" ? setVoiceText : kind === "icp" ? setIcpText : setVisualText;
-    return <article className="guidance-card"><span className="guidance-icon"><FiBookOpen /></span><h2>{title}</h2><p>{description}</p>{latest && <p className="last-updated">Last Updated {new Date(latest.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} <button className="view-button" onClick={() => setViewing(latest)}>View</button></p>}<label className="button primary wide"><FiUploadCloud /> {uploading === kind ? "Uploading…" : `Upload ${title}`}<input hidden type="file" accept={kind === "voice_guide" ? ".md,.txt,text/markdown,text/plain,application/text" : ".md,.pdf,.txt,.doc,.docx,text/markdown,application/text,application/pdf,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"} disabled={Boolean(uploading)} onChange={(e) => { void upload(kind, e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>Markdown, PDF, DOCX, DOC, or TXT · 10 MB max · private to your workspace</small><Field label={`Editable ${title}`}><textarea className="voice-editor" value={text} onChange={(e) => setText(e.target.value)} placeholder={`Upload a .md file or write the ${title} here…`} /></Field><button className="button wide" onClick={() => void saveGuide(kind, text, `${title}.md`)} disabled={savingVoice}>{savingVoice ? "Saving…" : `Save ${title}`}</button>{docs.length > 0 ? <div className="document-list">{docs.map((doc) => <div key={doc.id}><FiFileText /> <span>{doc.file_name}</span><button aria-label={`Delete ${doc.file_name}`} className="text-danger" onClick={() => void deleteDocument(doc)}><FiTrash2 /></button></div>)}</div> : <div className="document-empty">No file uploaded yet.</div>}</article>;
+    const asset = bundledPromptAssets[kind];
+    return <article className="guidance-card"><span className="guidance-icon"><FiBookOpen /></span><h2>{title}</h2><p>{description}</p>{latest && <p className="last-updated">Last Updated {new Date(latest.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} <button className="view-button" onClick={() => setViewing(latest)}>View</button></p>}<label className="button primary wide"><FiUploadCloud /> {uploading === kind ? "Uploading…" : `Upload replacement prompt`}<input hidden type="file" accept=".md,.txt,text/markdown,text/plain,application/text" disabled={Boolean(uploading)} onChange={(e) => { void upload(kind, e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>Markdown or TXT · 10 MB max · private to your workspace</small><Field label="Editable prompt"><textarea className="voice-editor" value={text} onChange={(e) => setText(e.target.value)} placeholder={`Paste or upload the ${title.toLowerCase()} here…`} /></Field><button className="button wide" onClick={() => void saveGuide(kind, text, asset.fileName)} disabled={savingVoice}>{savingVoice ? "Saving…" : "Save prompt"}</button>{docs.length > 0 ? <div className="document-list">{docs.map((doc) => <div key={doc.id}><FiFileText /> <span>{doc.file_name}</span><button aria-label={`Delete ${doc.file_name}`} className="text-danger" onClick={() => void deleteDocument(doc)}><FiTrash2 /></button></div>)}</div> : <div className="document-empty">Prompt asset is being installed…</div>}</article>;
   };
-  return <section><header className="page-header"><div><h1>Prompt guidance</h1><p>Upload the source documents that define who we are talking to, how Hank and the squirrel should sound, and how generated assets should look.</p></div></header><div className="guidance-grid">{card("icp", "ICP", "Your ideal customer profile: priorities, problems, context, and the emotional reality each post should recognize.")}{card("voice_guide", "GSD Voice", "Your tone, language, character rules, and creative guardrails. These will be injected into research and production prompts.")}{card("visual_guide", "Visual Guide", "Character scale, clothing, color, composition, speech-bubble, and continuity rules for Hank and the squirrel assets.")}</div>{message && <p className="guidance-message">{message}</p>}{viewing && <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(24,28,22,.56)", zIndex: 20, display: "grid", placeItems: "center", padding: 24 }}><div style={{ position: "relative", width: "min(850px, 100%)", maxHeight: "82vh", overflow: "auto", background: "#fffdf9", borderRadius: 16, padding: 32, boxShadow: "0 22px 70px rgba(0,0,0,.28)" }}><button className="modal-close" style={{ position: "absolute", top: 16, right: 16, fontSize: 22 }} onClick={() => setViewing(null)}><FiX /></button><h2 style={{ fontFamily: "Playfair Display", fontSize: 32, margin: "0 0 6px" }}>{viewing.kind === "icp" ? "ICP" : viewing.kind === "voice_guide" ? "GSD Voice" : "Visual Guide"}</h2><p style={{ color: "#777168", margin: "0 0 22px" }}>{viewing.file_name}</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 1.6, background: "#f5f2ea", padding: 20, borderRadius: 10, margin: 0 }}>{viewing.text_content || "This uploaded file does not contain viewable Markdown/text. Upload a .md or .txt version to view it here."}</pre></div></div>}<div className="panel guidance-note"><FiCheck /><div><b>Private by default</b><p>These documents are stored in a private Supabase bucket. Only your signed-in workspace can access them.</p></div></div></section>;
+  return <section><header className="page-header"><div><h1>Prompt assets</h1><p>Your ICP, Voice, and Image prompts are the source of truth for research, prompt generation, and production. They are installed to your private workspace automatically.</p></div>{installing && <span className="chip"><FiRefreshCw className="spin" /> Installing prompts…</span>}</header><div className="guidance-grid">{card("icp", "ICP Prompt", "Defines the audience, emotional reality, and practical relevance every post should recognize.")}{card("voice_guide", "Voice Prompt", "Defines Hank and the squirrel’s writing voice, humor, dialogue, and brand guardrails.")}{card("visual_guide", "Image Prompt", "Defines character identity, scale, wardrobe, palette, composition, and continuity for generated assets.")}</div>{message && <p className="guidance-message">{message}</p>}{viewing && <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(24,28,22,.56)", zIndex: 20, display: "grid", placeItems: "center", padding: 24 }}><div style={{ position: "relative", width: "min(850px, 100%)", maxHeight: "82vh", overflow: "auto", background: "#fffdf9", borderRadius: 16, padding: 32, boxShadow: "0 22px 70px rgba(0,0,0,.28)" }}><button className="modal-close" style={{ position: "absolute", top: 16, right: 16, fontSize: 22 }} onClick={() => setViewing(null)}><FiX /></button><h2 style={{ fontFamily: "Playfair Display", fontSize: 32, margin: "0 0 6px" }}>{viewing.kind === "icp" ? "ICP Prompt" : viewing.kind === "voice_guide" ? "Voice Prompt" : "Image Prompt"}</h2><p style={{ color: "#777168", margin: "0 0 22px" }}>{viewing.file_name}</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 1.6, background: "#f5f2ea", padding: 20, borderRadius: 10, margin: 0 }}>{viewing.text_content || "This prompt asset does not contain viewable Markdown/text."}</pre></div></div>}<div className="panel guidance-note"><FiCheck /><div><b>Private prompt assets</b><p>These prompt assets are stored in your private Supabase bucket and used by future research and generation requests.</p></div></div></section>;
 }
 
 function Dashboard({
