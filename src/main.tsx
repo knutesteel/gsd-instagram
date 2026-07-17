@@ -50,9 +50,7 @@ function App() {
   const [selected, setSelected] = useState("");
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
-  const [caption, setCaption] = useState(
-    "You don’t need more willpower. You need fewer tiny interruptions pretending to be urgent.\n\nYour focus is real. Protect it like it matters.",
-  );
+  const [caption, setCaption] = useState("");
   const [change, setChange] = useState("");
   const [toast, setToast] = useState("");
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
@@ -105,7 +103,7 @@ function App() {
       old.map((i) => (i.id === selected ? { ...i, status: "Produced" } : i)),
     );
     setScreen("produce");
-    notify("Five carousel panels are ready for review.");
+    notify("Production workspace opened.");
   };
   const navigate = (next: number) => {
     const index = items.findIndex((i) => i.id === selected);
@@ -505,7 +503,7 @@ function Discover({
       </div>
       <div className="panel progress">
         <h2>{searching ? "Preparing research" : queued.length ? "Queued research" : "Ready to research"}</h2>
-        {(queued.length ? queued : ["Attention & Brain", "Animal Behavior", "Weird Human News"]).map(
+        {(queued.length ? queued : []).map(
           (t, i) => (
             <div className="progress-row" key={t}>
               <span className="round">{i + 1}</span>
@@ -521,6 +519,7 @@ function Discover({
             </div>
           ),
         )}
+        {!searching && queued.length === 0 && <p className="empty-progress">Start a search to create research jobs. No sample stories are shown.</p>}
       </div>
     </section>
   );
@@ -593,15 +592,11 @@ function Detail({
               <option>Single image</option>
             </select>
           </Field>
-          <Field label="Panels">
-            <input defaultValue="5" />
-          </Field>
+          <Field label="Panels"><input placeholder="e.g. 5" /></Field>
           <Field label="Image summary">
             <textarea
               className="expanded"
-              defaultValue={
-                "Location: warm home office\nTime: late afternoon\nHank’s expression: tired but amused\nthe squirrel’s expression: smug and delighted"
-              }
+              placeholder="Location, time of day, Hank’s expression, squirrel’s expression…"
             />
           </Field>
         </div>
@@ -609,9 +604,7 @@ function Detail({
           <Field label="Detailed production prompt">
             <textarea
               className="tall"
-              defaultValue={
-                "Create five separate 4:5 carousel panels using the GSD Voice and ICP. Hank is visibly larger than the squirrel. All conversation is in readable speech bubbles. Maintain clothing and setting continuity.\n\nHank: “Every notification is a tiny meeting you didn’t agree to.”\nthe squirrel: “I put them all on your calendar. You’re welcome.”"
-              }
+              placeholder="Generated production prompt will appear here after research."
             />
           </Field>
           <Field label="Caption">
@@ -622,7 +615,7 @@ function Detail({
             />
           </Field>
           <Field label="Suggested hashtags">
-            <input defaultValue="#FocusOverFluff, #Attention, #GetShitDone, #DeepWork" />
+            <input placeholder="#hashtags" />
           </Field>
         </div>
       </div>
@@ -702,23 +695,12 @@ function Produce({
           </div>
           <div className="copy-grid">
             <Field label="Post text">
-              <textarea
-                defaultValue={
-                  "Every ping pulls a little from your focus.\n\nThe cost is real—your attention, your time, your peace.\n\nProtect your focus. Do what matters most."
-                }
-              />
+              <textarea placeholder="Generated post text will appear here." />
             </Field>
             <div className="field hash-field">
               <b>Suggested hashtags</b>
               <div className="hashes">
-                {[
-                  "#Focus",
-                  "#DeepWork",
-                  "#AttentionIsScarce",
-                  "#DigitalWellbeing",
-                  "#MindfulWork",
-                  "#GSD",
-                ].map((x) => (
+                {[].map((x) => (
                   <span key={x}>
                     {x} <FiPlus />
                   </span>
@@ -830,7 +812,7 @@ function Preview({
           <p>{caption}</p>
           <b>Hashtags</b>
           <div className="hashtags">
-            {["#FocusOverFluff", "#Attention", "#GetShitDone", "#DeepWork"].map(
+            {[].map(
               (x) => (
                 <span key={x}>
                   {x} <FiX />
