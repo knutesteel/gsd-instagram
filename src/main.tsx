@@ -130,6 +130,17 @@ function App() {
     void updateStatus(articleId, "produced");
     return assets as GeneratedAsset[];
   };
+  const loadAssets = async (articleId: string) => {
+    if (!supabase) return [] as GeneratedAsset[];
+    const client = supabase;
+    const { data: conceptRow } = await client.from("post_concepts").select("id").eq("article_id", articleId).maybeSingle();
+    if (!conceptRow) return [] as GeneratedAsset[];
+    const { data: rows } = await client.from("assets").select("id,sequence,storage_path").eq("concept_id", conceptRow.id).eq("is_active", true).order("sequence", { ascending: true });
+    return Promise.all((rows ?? []).map(async (asset) => {
+      const { data } = await client.storage.from("post-assets").createSignedUrl(asset.storage_path, 60 * 60);
+      return { ...asset, url: data?.signedUrl ?? "" } as GeneratedAsset;
+    }));
+  };
   const produce = () => {
     setScreen("produce");
     setProductionRequest((request) => request + 1);
@@ -232,6 +243,7 @@ function App() {
               setSelected(id);
               produce();
             }}
+            onViewAssets={(id) => { setSelected(id); setScreen("produce"); }}
             onDiscard={discard}
             onStatus={(id, status) => { setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item)); void updateStatus(id, status.toLowerCase() as "new" | "produced" | "ready" | "posted"); }}
           />
@@ -264,6 +276,7 @@ function App() {
             story={active}
             productionRequest={productionRequest}
             generateAssets={generateAssets}
+            loadAssets={loadAssets}
             caption={caption}
             setCaption={setCaption}
             change={change}
@@ -388,6 +401,7 @@ function Dashboard({
   discover,
   select,
   onProduce,
+  onViewAssets,
   onDiscard,
   onStatus,
 }: {
@@ -395,6 +409,7 @@ function Dashboard({
   discover: () => void;
   select: (id: string) => void;
   onProduce: (id: string) => void;
+  onViewAssets: (id: string) => void;
   onDiscard: (id: string) => void;
   onStatus: (id: string, status: Exclude<Story["status"], "Archived">) => void;
 }) {
@@ -459,6 +474,7 @@ function Dashboard({
               <button className="outline" onClick={() => onProduce(item.id)}>
                 Produce
               </button>
+              {item.status !== "New" && <button onClick={() => onViewAssets(item.id)}>View Assets</button>}
               <button
                 className="text-danger"
                 onClick={() => onDiscard(item.id)}
@@ -717,6 +733,7 @@ function Produce({
   story,
   productionRequest,
   generateAssets,
+  loadAssets,
   caption,
   setCaption,
   change,
@@ -727,6 +744,7 @@ function Produce({
   story: Story;
   productionRequest: number;
   generateAssets: (articleId: string, requestedChange?: string, sequence?: number) => Promise<GeneratedAsset[]>;
+  loadAssets: (articleId: string) => Promise<GeneratedAsset[]>;
   caption: string;
   setCaption: (value: string) => void;
   change: string;
@@ -738,6 +756,10 @@ function Produce({
   const [active, setActive] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => {
+    setError("");
+    loadAssets(story.id).then((saved) => { if (saved.length) { setAssets(saved); setActive(0); } }).catch(() => undefined);
+  }, [story.id]);
   useEffect(() => {
     if (!productionRequest) return;
     setLoading(true);
