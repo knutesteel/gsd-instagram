@@ -75,8 +75,7 @@ ${panelBrief(content, sequence)}
 
 NON-NEGOTIABLE CHARACTER CONTINUITY: Hank and the squirrel must both appear in this panel. Preserve the same Hank, squirrel, outfits, body proportions, illustration style, desk/room, lighting, and color palette throughout the carousel. Do not redesign either character. Use the exact spoken dialog from the panel brief in legible speech bubbles.
 
-Consistency brief: ${concept.image_summary?.consistency ?? ""}
-Setting: ${concept.image_summary?.setting ?? ""}
+ARTICLE-SPECIFIC SETTING: ${concept.image_summary?.setting ?? ""}
 
 ===== FULL GSD VOICE GUIDE — HIGHEST PRIORITY =====
 ${voiceGuide}

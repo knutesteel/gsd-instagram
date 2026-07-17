@@ -148,12 +148,12 @@ function App() {
     setScreen("produce");
     setProductionRequest((request) => request + 1);
   };
-  const saveDetail = async (articleId: string, values: { title: string; url: string; score: number; postType: string; panelCount: number; consistency: string; setting: string; content: string; caption: string; prompt: string; hashtags: string }) => {
+  const saveDetail = async (articleId: string, values: { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; caption: string; prompt: string; hashtags: string }) => {
     if (!supabase) return;
     const articleUpdate = await supabase.from("articles").update({ title: values.title, source_url: values.url, canonical_url: values.url, rank: values.score }).eq("id", articleId);
     if (articleUpdate.error) throw new Error(articleUpdate.error.message);
     const hashtags = normalizeHashtags(values.hashtags);
-    const conceptUpdate = await supabase.from("post_concepts").update({ post_type: values.postType, panel_count: values.panelCount, image_summary: { consistency: values.consistency, setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption, hashtags }).eq("article_id", articleId);
+    const conceptUpdate = await supabase.from("post_concepts").update({ post_type: values.postType, panel_count: values.panelCount, image_summary: { setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption, hashtags }).eq("article_id", articleId);
     if (conceptUpdate.error) throw new Error(conceptUpdate.error.message);
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, score: values.score, type: values.postType } : item));
     setCaption(values.caption);
@@ -723,7 +723,6 @@ function Detail({
           <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
           <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="Carousel">Five-panel Instagram carousel</option><option value="Single image">Single image</option><option value="Reel">Reel</option></select></Field>
           <Field label="Panels"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
-          <Field label="Consistency"><textarea className="expanded" value={values.consistency} onChange={(e) => update("consistency", e.target.value)} /></Field>
           <Field label="Setting"><textarea style={{ minHeight: 95 }} value={values.setting} onChange={(e) => update("setting", e.target.value)} /></Field>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
           <Field label="Recommended hashtags · 3–5"><textarea style={{ minHeight: 100 }} value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field>
@@ -737,7 +736,7 @@ function Detail({
     </section>
   );
 }
-type DetailValues = { title: string; url: string; score: number; postType: string; panelCount: number; consistency: string; setting: string; content: string; prompt: string; caption: string; hashtags: string };
+type DetailValues = { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; prompt: string; caption: string; hashtags: string };
 function normalizeHashtags(value: string) {
   const cleaned = value.split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean).map((tag) => `#${tag.replace(/^#/, "").toLowerCase()}`);
   return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
@@ -745,7 +744,7 @@ function normalizeHashtags(value: string) {
 function detailValues(story: Story, concept: Concept | null): DetailValues {
   const image = concept?.image_summary ?? {};
   const content = (image.content ?? concept?.detailed_prompt ?? "").replace(/\s+(Panel\s+\d+\s*:)/gi, "\n\n$1");
-  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, consistency: image.consistency ?? "Keep Hank and the squirrel’s clothing, proportions, expressions, and setting consistent through every panel.", setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" ") };
+  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" ") };
 }
 function Field({
   label,

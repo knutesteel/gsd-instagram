@@ -3,10 +3,12 @@ import { createHash } from "node:crypto";
 const jsonHeaders = { "Content-Type": "application/json" };
 const extractJson = (text) => {
   const clean = text.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
-  const start = clean.indexOf("[");
-  const end = clean.lastIndexOf("]");
-  if (start >= 0 && end > start) return JSON.parse(clean.slice(start, end + 1));
-  return JSON.parse(clean);
+  const firstArray = clean.indexOf("[");
+  const firstObject = clean.indexOf("{");
+  const start = firstArray === -1 ? firstObject : firstObject === -1 ? firstArray : Math.min(firstArray, firstObject);
+  const end = clean[start] === "[" ? clean.lastIndexOf("]") : clean.lastIndexOf("}");
+  const parsed = JSON.parse(start >= 0 && end > start ? clean.slice(start, end + 1) : clean);
+  return Array.isArray(parsed) ? parsed : parsed.stories ?? [];
 };
 const normalizeHashtags = (items) => Array.from(new Set(["#gsd-book", ...(Array.isArray(items) ? items : []).map((tag) => `#${String(tag).replace(/^#/, "").toLowerCase()}`).filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
 
@@ -23,14 +25,17 @@ export default async function handler(req, res) {
   const user = await userResponse.json();
   const { mode = "system", manualUrl, searchText, topics = [], timeframe = 48 } = req.body ?? {};
   if (mode === "manual" && !/^https:\/\//i.test(manualUrl ?? "")) return res.status(400).json({ error: "A complete HTTPS article URL is required." });
-  const docsResponse = await fetch(`${supabaseUrl}/rest/v1/prompt_documents?select=kind,text_content&is_active=eq.true`, { headers: auth });
+  const docsResponse = await fetch(`${supabaseUrl}/rest/v1/prompt_documents?select=kind,text_content,file_name&is_active=eq.true&order=created_at.desc`, { headers: auth });
   const docs = docsResponse.ok ? await docsResponse.json() : [];
   const voice = docs.find((doc) => doc.kind === "voice_guide")?.text_content ?? "Use a warm, direct, non-judgmental GSD voice. Hank and the squirrel reveal an honest execution insight.";
   const icp = docs.find((doc) => doc.kind === "icp")?.text_content ?? "Knowledge workers who want practical, compassionate help protecting attention and following through.";
-  const query = mode === "manual" ? `Analyze this direct article URL: ${manualUrl}` : `Find fresh, accessible stories from the past ${timeframe} hours. Search focus: ${searchText || topics.join(", ")}.`;
+  const query = mode === "manual" ? `Analyze this exact direct article URL: ${manualUrl}. The returned url must exactly match it.` : `Find fresh, accessible stories from the past ${timeframe} hours. Search focus: ${searchText || topics.join(", ")}.`;
   const instructions = `You are the GSD Instagram research editor. ${query}
-Follow this policy: original accessible sources only; no politics, celebrity gossip, routine sports, paywalls, aggregators, or sensational misinformation. Prioritize neuroscience/behavior, surprising animals, science/space, archaeology, offbeat human stories, attention technology, and immediately useful productivity. Use web search. Return ${mode === "manual" ? "one" : "three"} high-fit stories. Score rank 61-100 based on engagement for the GSD ICP. GSD ICP: ${icp}\nGSD VOICE: ${voice}\nReturn ONLY a JSON array. Each object must have title,url,publisher,category,rank,summary (25 words max),post_type,panel_count,image_summary (object with exactly consistency,setting,content),caption,hashtags (array). Return 3–5 relevant hashtags and always include #gsd-book. Content is the creative brief, not an image prompt: every single panel must show Hank and the squirrel together discussing or reacting to this specific article. Each panel must include their actions/expressions and exact dialog for both Hank and the squirrel. Never return panels without both characters. Do not return detailed_prompt.`;
-  const aiResponse = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { ...jsonHeaders, Authorization: `Bearer ${openaiKey}` }, body: JSON.stringify({ model: "gpt-5-mini", tools: [{ type: "web_search" }], input: instructions }) });
+Follow this policy: original accessible sources only; no politics, celebrity gossip, routine sports, paywalls, aggregators, or sensational misinformation. Prioritize neuroscience/behavior, surprising animals, science/space, archaeology, offbeat human stories, attention technology, and immediately useful productivity. Use web search. Return ${mode === "manual" ? "one" : "three"} high-fit stories. Score rank 61-100 based on engagement for the GSD ICP.
+
+GSD ICP PROMPT:\n${icp}\n\nGSD VOICE PROMPT:\n${voice}\n\nThe image_summary.content field is an ARTICLE-SPECIFIC panel brief only. It must contain 1–5 clearly separated panels with the article-specific scene/action, Hank’s exact dialogue, and the squirrel’s exact dialogue. Every panel must show both characters discussing or reacting to the article. Do not include any voice-guide, style-guide, visual-guide, clothing, scale, color, palette, composition, continuity, or image-generation instructions in content. Those rules come from saved prompts later. Do not return detailed_prompt.`;
+  const schema = { type: "object", additionalProperties: false, required: ["stories"], properties: { stories: { type: "array", items: { type: "object", additionalProperties: false, required: ["title", "url", "publisher", "category", "rank", "summary", "post_type", "panel_count", "image_summary", "caption", "hashtags"], properties: { title: { type: "string" }, url: { type: "string" }, publisher: { type: "string" }, category: { type: "string" }, rank: { type: "number" }, summary: { type: "string" }, post_type: { type: "string" }, panel_count: { type: "number" }, image_summary: { type: "object", additionalProperties: false, required: ["setting", "content"], properties: { setting: { type: "string" }, content: { type: "string" } } }, caption: { type: "string" }, hashtags: { type: "array", items: { type: "string" } } } } } } };
+  const aiResponse = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { ...jsonHeaders, Authorization: `Bearer ${openaiKey}` }, body: JSON.stringify({ model: "gpt-5-mini", tools: [{ type: "web_search" }], input: instructions, text: { format: { type: "json_schema", name: "gsd_article_analysis", strict: true, schema } } }) });
   if (!aiResponse.ok) return res.status(502).json({ error: `Research provider error: ${await aiResponse.text()}` });
   const ai = await aiResponse.json();
   const output = ai.output_text ?? ai.output?.flatMap((item) => item.content ?? []).find((part) => part.type === "output_text")?.text;
