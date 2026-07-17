@@ -24,6 +24,7 @@ import {
   FiX,
 } from "react-icons/fi";
 import "./styles.css";
+import "./dashboard.css";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import icpPromptAsset from "./prompt-assets/icp-prompt.md?raw";
 import voicePromptAsset from "./prompt-assets/voice-prompt.md?raw";
@@ -488,25 +489,25 @@ function Dashboard({
           <span>Score</span>
           <span>Post type</span>
           <span>Status</span>
+          <span>Content</span>
           <span>Actions</span>
         </div>
         {shown.length === 0 && <div className="empty-queue"><FiCompass /><h2>No stories in your queue yet</h2><p>Use Discover to find fresh, high-fit stories. Your discarded items remain protected from duplicates.</p><button className="button primary" onClick={discover}>Find fresh stories</button></div>}
         {shown.map((item) => (
           <div className="story-row" key={item.id}>
             <div>
-              <h3>{item.title}</h3>
+              <h3><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
               <p>{item.overview}</p>
             </div>
             <span className="chip">{item.category}</span>
             <span className="score">{item.score}</span>
             <span className="type">{item.type}</span>
             <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Produced</option><option>Ready</option><option>Posted</option></select>
+            <button className="content-link" onClick={() => onViewAssets(item.id)}>View content</button>
             <div className="actions">
-              <button onClick={() => select(item.id)}>Edit</button>
               <button className="outline" onClick={() => onProduce(item.id)}>
-                Produce
+                Generate
               </button>
-              {item.status !== "New" && <button onClick={() => onViewAssets(item.id)}>View Assets</button>}
               <button
                 className="text-danger"
                 onClick={() => onDiscard(item.id)}
@@ -841,7 +842,7 @@ function Produce({
       <header className="produce-head">
         <div>
           <h1>
-            Produce carousel{" "}
+            Content{" "}
             <span className="ready">
               {loading ? <FiRefreshCw /> : <FiCheck />} {loading ? "Generating assets…" : assets.length ? "Assets ready" : "Preparing assets"}
             </span>

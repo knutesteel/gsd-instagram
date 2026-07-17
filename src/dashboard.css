@@ -1,0 +1,26 @@
+.story-head,
+.story-row {
+  grid-template-columns: 3.2fr 1.45fr 0.65fr 1fr 0.9fr 0.9fr 1.25fr;
+}
+
+.story-title-link {
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: #d15636;
+  text-underline-offset: 4px;
+}
+
+.content-link {
+  color: #bd4b2e;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.story-title-link:hover,
+.content-link:hover {
+  color: #bd4b2e;
+}
