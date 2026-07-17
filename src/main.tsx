@@ -690,7 +690,7 @@ function normalizeHashtags(value: string) {
 function detailValues(story: Story, concept: Concept | null): DetailValues {
   const image = concept?.image_summary ?? {};
   const content = (image.content ?? concept?.detailed_prompt ?? "").replace(/\s+(Panel\s+\d+\s*:)/gi, "\n\n$1");
-  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, consistency: image.consistency ?? "Keep Hank and the squirrel’s clothing, proportions, expressions, and setting consistent through every panel.", setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" ") };
+  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, consistency: image.consistency ?? "Keep Hank and the squirrel’s clothing, proportions, expressions, and setting consistent through every panel.", setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" ") };
 }
 function Field({
   label,
