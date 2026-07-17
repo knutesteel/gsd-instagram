@@ -36,12 +36,22 @@ export default async function handler(req, res) {
   const concepts = conceptResponse.ok ? await conceptResponse.json() : [];
   const concept = concepts[0];
   if (!concept) return res.status(404).json({ error: "Create an article concept before producing assets." });
-  const guideResponse = await fetch(`${supabaseUrl}/rest/v1/prompt_documents?select=kind,text_content,created_at&is_active=eq.true&order=created_at.desc`, { headers: auth });
-  const guides = guideResponse.ok ? await guideResponse.json() : [];
-  const guide = (kind) => guides.find((item) => item.kind === kind)?.text_content ?? "";
+  const guideResponse = await fetch(`${supabaseUrl}/rest/v1/prompt_documents?select=kind,text_content,storage_path,file_name,created_at&is_active=eq.true&order=created_at.desc`, { headers: auth });
+  const storedGuides = guideResponse.ok ? await guideResponse.json() : [];
+  const guides = await Promise.all(storedGuides.map(async (item) => {
+    if (item.text_content?.trim() || !item.storage_path) return item;
+    const file = await fetch(`${supabaseUrl}/storage/v1/object/authenticated/prompt-documents/${item.storage_path}`, { headers: auth });
+    return file.ok ? { ...item, text_content: await file.text() } : item;
+  }));
+  const guide = (kind) => {
+    const direct = guides.find((item) => item.kind === kind && item.text_content?.trim());
+    if (direct) return direct.text_content;
+    const clue = kind === "voice_guide" ? /voice/i : /visual|image/i;
+    return guides.find((item) => clue.test(item.file_name ?? "") && item.text_content?.trim())?.text_content ?? "";
+  };
   const voiceGuide = guide("voice_guide");
   const visualGuide = guide("visual_guide");
-  if (!voiceGuide.trim() || !visualGuide.trim()) return res.status(422).json({ error: "Upload and save both a GSD Voice and Visual Guide before generating assets." });
+  if (!voiceGuide.trim() || !visualGuide.trim()) return res.status(422).json({ error: `Missing readable ${!voiceGuide.trim() ? "GSD Voice" : "Visual Guide"}. Upload the matching .md file in Prompt Guidance (or paste it into that guide’s editable field and click Save).` });
   const count = Math.min(Math.max(concept.panel_count || 1, 1), 5);
   const sequences = requestedSequence
     ? [Math.min(Math.max(Number(requestedSequence) || 1, 1), count)]
