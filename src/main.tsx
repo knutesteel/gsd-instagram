@@ -741,9 +741,21 @@ function normalizeHashtags(value: string) {
   const cleaned = value.split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean).map((tag) => `#${tag.replace(/^#/, "").toLowerCase()}`);
   return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
 }
+function formatPanelContent(value: string) {
+  const firstPanel = value.search(/\bPanel\s*1\b/i);
+  const panelOnly = firstPanel >= 0 ? value.slice(firstPanel) : value;
+  return panelOnly
+    .replace(/\bHank\s*\(human\)/gi, "Hank")
+    .replace(/(?:^|\n)\s*(?:Style|Voice)\s*:[\s\S]*?(?=\n\s*Panel\s+\d+\b|$)/gi, "")
+    .replace(/\s+(?:Style|Voice)\s*:[\s\S]*$/gi, "")
+    .replace(/\s+(Panel\s+\d+\s*[—:-])/gi, "\n\n$1")
+    .replace(/\s+(Text overlay:)/gi, "\n\n$1")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 function detailValues(story: Story, concept: Concept | null): DetailValues {
   const image = concept?.image_summary ?? {};
-  const content = (image.content ?? concept?.detailed_prompt ?? "").replace(/\s+(Panel\s+\d+\s*:)/gi, "\n\n$1");
+  const content = formatPanelContent(image.content ?? concept?.detailed_prompt ?? "");
   return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" ") };
 }
 function Field({
