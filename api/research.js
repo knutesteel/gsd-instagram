@@ -37,13 +37,18 @@ Follow this policy: original accessible sources only; no politics, celebrity gos
   const records = [];
   for (const item of accepted) {
     const fingerprint = createHash("sha256").update(item.url.split("#")[0].replace(/\/$/, "")).digest("hex");
-    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "proposed" }) });
+    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "new" }) });
     const articleRows = articleResponse.ok ? await articleResponse.json() : [];
-    const article = articleRows[0];
+    let article = articleRows[0];
+    if (!article) {
+      const existing = await fetch(`${supabaseUrl}/rest/v1/articles?select=id&url_fingerprint=eq.${fingerprint}`, { headers: auth });
+      const existingRows = existing.ok ? await existing.json() : [];
+      article = existingRows[0];
+    }
     if (article) {
       await fetch(`${supabaseUrl}/rest/v1/post_concepts?on_conflict=article_id`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ article_id: article.id, user_id: user.id, summary: item.summary.slice(0, 200), post_type: item.post_type, panel_count: item.panel_count ?? (item.post_type === "carousel" ? 5 : 1), image_summary: item.image_summary ?? {}, detailed_prompt: item.detailed_prompt, caption: item.caption, hashtags: item.hashtags ?? [] }) });
       records.push(article.id);
     }
   }
-  return res.status(200).json({ count: records.length });
+  return res.status(200).json({ count: records.length, articleIds: records });
 }
