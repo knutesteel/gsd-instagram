@@ -285,10 +285,10 @@ function AuthGate() {
   </form></main>;
 }
 
-type PromptDocument = { id: string; kind: "icp" | "voice_guide"; file_name: string; created_at: string; text_content?: string | null };
+type PromptDocument = { id: string; kind: "icp" | "voice_guide" | "visual_guide"; file_name: string; created_at: string; text_content?: string | null };
 function Guidance() {
   const [documents, setDocuments] = useState<PromptDocument[]>([]);
-  const [uploading, setUploading] = useState<"icp" | "voice_guide" | null>(null);
+  const [uploading, setUploading] = useState<"icp" | "voice_guide" | "visual_guide" | null>(null);
   const [message, setMessage] = useState("");
   const [voiceText, setVoiceText] = useState("");
   const [savingVoice, setSavingVoice] = useState(false);
@@ -298,7 +298,7 @@ function Guidance() {
     if (error) setMessage(error.message); else { const saved = (data ?? []) as PromptDocument[]; setDocuments(saved); setVoiceText(saved.find((doc) => doc.kind === "voice_guide")?.text_content ?? ""); }
   };
   useEffect(() => { void loadDocuments(); }, []);
-  const upload = async (kind: "icp" | "voice_guide", file?: File) => {
+  const upload = async (kind: "icp" | "voice_guide" | "visual_guide", file?: File) => {
     if (!supabase || !file) return;
     if (file.size > 10 * 1024 * 1024) return setMessage("Please choose a file smaller than 10 MB.");
     setUploading(kind); setMessage("");
@@ -315,11 +315,11 @@ function Guidance() {
     setUploading(null);
   };
   const saveVoice = async () => { if (!supabase) return; setSavingVoice(true); const { data: userData } = await supabase.auth.getUser(); const existing = documents.find((doc) => doc.kind === "voice_guide"); const payload = { text_content: voiceText, file_name: existing?.file_name ?? "GSD Voice.md" }; const { error } = existing ? await supabase.from("prompt_documents").update(payload).eq("id", existing.id) : await supabase.from("prompt_documents").insert({ user_id: userData.user?.id, kind: "voice_guide", storage_path: `${userData.user?.id}/voice_guide/GSD-Voice.md`, mime_type: "text/markdown", file_size: voiceText.length, ...payload }); setSavingVoice(false); setMessage(error ? error.message : "GSD Voice saved and ready for all future prompts."); await loadDocuments(); };
-  const card = (kind: "icp" | "voice_guide", title: string, description: string) => {
+  const card = (kind: "icp" | "voice_guide" | "visual_guide", title: string, description: string) => {
     const docs = documents.filter((doc) => doc.kind === kind);
     return <article className="guidance-card"><span className="guidance-icon"><FiBookOpen /></span><h2>{title}</h2><p>{description}</p><label className="button primary wide"><FiUploadCloud /> {uploading === kind ? "Uploading…" : `Upload ${title}`}<input hidden type="file" accept={kind === "voice_guide" ? ".md,.txt,text/markdown,text/plain" : ".pdf,.txt,.doc,.docx,application/pdf,text/plain,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"} disabled={Boolean(uploading)} onChange={(e) => { void upload(kind, e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>{kind === "voice_guide" ? "Markdown or TXT · editable below" : "PDF, DOCX, DOC, or TXT · 10 MB max"} · private to your workspace</small>{kind === "voice_guide" && <><Field label="Editable GSD Voice"><textarea className="voice-editor" value={voiceText} onChange={(e) => setVoiceText(e.target.value)} placeholder="Upload a .md file or write the GSD Voice here…" /></Field><button className="button wide" onClick={() => void saveVoice()} disabled={savingVoice}>{savingVoice ? "Saving…" : "Save GSD Voice"}</button></>}{docs.length > 0 ? <div className="document-list">{docs.map((doc) => <div key={doc.id}><FiFileText /> <span>{doc.file_name}</span><FiCheck /></div>)}</div> : <div className="document-empty">No file uploaded yet.</div>}</article>;
   };
-  return <section><header className="page-header"><div><h1>Prompt guidance</h1><p>Upload the source documents that define who we are talking to and how Hank and the squirrel should sound.</p></div></header><div className="guidance-grid">{card("icp", "ICP", "Your ideal customer profile: priorities, problems, context, and the emotional reality each post should recognize.")}{card("voice_guide", "GSD Voice", "Your tone, language, character rules, and creative guardrails. These will be injected into research and production prompts.")}</div>{message && <p className="guidance-message">{message}</p>}<div className="panel guidance-note"><FiCheck /><div><b>Private by default</b><p>These documents are stored in a private Supabase bucket. Only your signed-in workspace can access them.</p></div></div></section>;
+  return <section><header className="page-header"><div><h1>Prompt guidance</h1><p>Upload the source documents that define who we are talking to, how Hank and the squirrel should sound, and how generated assets should look.</p></div></header><div className="guidance-grid">{card("icp", "ICP", "Your ideal customer profile: priorities, problems, context, and the emotional reality each post should recognize.")}{card("voice_guide", "GSD Voice", "Your tone, language, character rules, and creative guardrails. These will be injected into research and production prompts.")}{card("visual_guide", "Visual Guide", "Character scale, clothing, color, composition, speech-bubble, and continuity rules for Hank and the squirrel assets.")}</div>{message && <p className="guidance-message">{message}</p>}<div className="panel guidance-note"><FiCheck /><div><b>Private by default</b><p>These documents are stored in a private Supabase bucket. Only your signed-in workspace can access them.</p></div></div></section>;
 }
 
 function Dashboard({
