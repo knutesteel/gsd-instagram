@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 const jsonHeaders = { "Content-Type": "application/json" };
 const extractJson = (text) => {
   const clean = text.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+  const start = clean.indexOf("[");
+  const end = clean.lastIndexOf("]");
+  if (start >= 0 && end > start) return JSON.parse(clean.slice(start, end + 1));
   return JSON.parse(clean);
 };
 
@@ -33,7 +36,8 @@ Follow this policy: original accessible sources only; no politics, celebrity gos
   const output = ai.output_text ?? ai.output?.flatMap((item) => item.content ?? []).find((part) => part.type === "output_text")?.text;
   let candidates;
   try { candidates = extractJson(output); } catch { return res.status(502).json({ error: "Research response could not be read. Please try again." }); }
-  const accepted = candidates.filter((item) => item.title && /^https:\/\//i.test(item.url) && item.rank >= 61).slice(0, mode === "manual" ? 1 : 3);
+  const accepted = candidates.filter((item) => item.title && /^https:\/\//i.test(item.url) && (mode === "manual" || item.rank >= 61)).slice(0, mode === "manual" ? 1 : 3);
+  if (accepted.length === 0) return res.status(422).json({ error: mode === "manual" ? "The article could not be analyzed into a usable GSD post concept." : "No qualifying stories were found. Try different topics." });
   const records = [];
   for (const item of accepted) {
     const fingerprint = createHash("sha256").update(item.url.split("#")[0].replace(/\/$/, "")).digest("hex");
