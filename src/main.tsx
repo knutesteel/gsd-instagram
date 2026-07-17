@@ -254,7 +254,6 @@ function App() {
             notify={notify}
             previous={() => navigate(-1)}
             next={() => navigate(1)}
-            produce={produce}
             discard={() => discard(active.id)}
           />
         )}
@@ -614,7 +613,6 @@ function Detail({
   concept,
   previous,
   next,
-  produce,
   discard,
   saveDetail,
   generatePrompt,
@@ -625,7 +623,6 @@ function Detail({
   concept: Concept | null;
   previous: () => void;
   next: () => void;
-  produce: () => void;
   discard: () => void;
   saveDetail: (id: string, values: DetailValues) => Promise<void>;
   generatePrompt: (id: string, values: Record<string, unknown>) => Promise<string>;
@@ -657,9 +654,6 @@ function Detail({
           </button>
           <button onClick={rerun} disabled={Boolean(busy)}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : "Regenerate analysis"}</button>
           <button onClick={save} disabled={Boolean(busy)}><FiCheck /> {busy === "save" ? "Saving…" : "Save changes"}</button>
-          <button className="button primary" onClick={produce}>
-            Produce
-          </button>
         </div>
       </div>
       <h1>Article detail</h1>
@@ -670,11 +664,11 @@ function Detail({
           <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
           <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="Carousel">Five-panel Instagram carousel</option><option value="Single image">Single image</option><option value="Reel">Reel</option></select></Field>
           <Field label="Panels"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
-        </div>
-        <div className="right-fields">
           <Field label="Consistency"><textarea className="expanded" value={values.consistency} onChange={(e) => update("consistency", e.target.value)} /></Field>
           <Field label="Setting"><textarea className="expanded" value={values.setting} onChange={(e) => update("setting", e.target.value)} /></Field>
-          <Field label="Content"><textarea className="tall" value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
+        </div>
+        <div className="right-fields">
+          <Field label="Content"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
           <button className="button primary" onClick={prompt} disabled={Boolean(busy)} style={{ marginBottom: 18 }}><FiFileText /> {busy === "prompt" ? "Generating prompt…" : "Generate prompt"}</button>
           {values.prompt && <Field label="Full production prompt"><textarea className="tall" value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field>}
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
@@ -686,7 +680,8 @@ function Detail({
 type DetailValues = { title: string; url: string; score: number; postType: string; panelCount: number; consistency: string; setting: string; content: string; prompt: string; caption: string };
 function detailValues(story: Story, concept: Concept | null): DetailValues {
   const image = concept?.image_summary ?? {};
-  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, consistency: image.consistency ?? "Keep Hank and the squirrel’s clothing, proportions, expressions, and setting consistent through every panel.", setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content: image.content ?? concept?.detailed_prompt ?? "", prompt: "", caption: concept?.caption ?? "" };
+  const content = (image.content ?? concept?.detailed_prompt ?? "").replace(/\s+(Panel\s+\d+\s*:)/gi, "\n\n$1");
+  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, consistency: image.consistency ?? "Keep Hank and the squirrel’s clothing, proportions, expressions, and setting consistent through every panel.", setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: "", caption: concept?.caption ?? "" };
 }
 function Field({
   label,
