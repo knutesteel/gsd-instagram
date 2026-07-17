@@ -8,6 +8,7 @@ const extractJson = (text) => {
   if (start >= 0 && end > start) return JSON.parse(clean.slice(start, end + 1));
   return JSON.parse(clean);
 };
+const normalizeHashtags = (items) => Array.from(new Set(["#gsd-book", ...(Array.isArray(items) ? items : []).map((tag) => `#${String(tag).replace(/^#/, "").toLowerCase()}`).filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
 
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
@@ -22,14 +23,13 @@ export default async function handler(req, res) {
   const user = await userResponse.json();
   const { mode = "system", manualUrl, searchText, topics = [], timeframe = 48 } = req.body ?? {};
   if (mode === "manual" && !/^https:\/\//i.test(manualUrl ?? "")) return res.status(400).json({ error: "A complete HTTPS article URL is required." });
-
   const docsResponse = await fetch(`${supabaseUrl}/rest/v1/prompt_documents?select=kind,text_content&is_active=eq.true`, { headers: auth });
   const docs = docsResponse.ok ? await docsResponse.json() : [];
   const voice = docs.find((doc) => doc.kind === "voice_guide")?.text_content ?? "Use a warm, direct, non-judgmental GSD voice. Hank and the squirrel reveal an honest execution insight.";
   const icp = docs.find((doc) => doc.kind === "icp")?.text_content ?? "Knowledge workers who want practical, compassionate help protecting attention and following through.";
   const query = mode === "manual" ? `Analyze this direct article URL: ${manualUrl}` : `Find fresh, accessible stories from the past ${timeframe} hours. Search focus: ${searchText || topics.join(", ")}.`;
   const instructions = `You are the GSD Instagram research editor. ${query}
-Follow this policy: original accessible sources only; no politics, celebrity gossip, routine sports, paywalls, aggregators, or sensational misinformation. Prioritize neuroscience/behavior, surprising animals, science/space, archaeology, offbeat human stories, attention technology, and immediately useful productivity. Use web search. Return ${mode === "manual" ? "one" : "three"} high-fit stories. Score rank 61-100 based on engagement for the GSD ICP. GSD ICP: ${icp}\nGSD VOICE: ${voice}\nReturn ONLY a JSON array. Each object must have title,url,publisher,category,rank,summary (25 words max),post_type, panel_count, image_summary (object with exactly consistency,setting,content), caption,hashtags (array). Content is the creative brief, not an image prompt: every single panel must show Hank and the squirrel together discussing or reacting to this specific article. Each panel must include their actions/expressions and exact dialog for both Hank and the squirrel. Never return panels without both characters. Do not return detailed_prompt.`;
+Follow this policy: original accessible sources only; no politics, celebrity gossip, routine sports, paywalls, aggregators, or sensational misinformation. Prioritize neuroscience/behavior, surprising animals, science/space, archaeology, offbeat human stories, attention technology, and immediately useful productivity. Use web search. Return ${mode === "manual" ? "one" : "three"} high-fit stories. Score rank 61-100 based on engagement for the GSD ICP. GSD ICP: ${icp}\nGSD VOICE: ${voice}\nReturn ONLY a JSON array. Each object must have title,url,publisher,category,rank,summary (25 words max),post_type,panel_count,image_summary (object with exactly consistency,setting,content),caption,hashtags (array). Return 3–5 relevant hashtags and always include #gsd-book. Content is the creative brief, not an image prompt: every single panel must show Hank and the squirrel together discussing or reacting to this specific article. Each panel must include their actions/expressions and exact dialog for both Hank and the squirrel. Never return panels without both characters. Do not return detailed_prompt.`;
   const aiResponse = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { ...jsonHeaders, Authorization: `Bearer ${openaiKey}` }, body: JSON.stringify({ model: "gpt-5-mini", tools: [{ type: "web_search" }], input: instructions }) });
   if (!aiResponse.ok) return res.status(502).json({ error: `Research provider error: ${await aiResponse.text()}` });
   const ai = await aiResponse.json();
@@ -44,13 +44,9 @@ Follow this policy: original accessible sources only; no politics, celebrity gos
     const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "new" }) });
     const articleRows = articleResponse.ok ? await articleResponse.json() : [];
     let article = articleRows[0];
-    if (!article) {
-      const existing = await fetch(`${supabaseUrl}/rest/v1/articles?select=id&url_fingerprint=eq.${fingerprint}`, { headers: auth });
-      const existingRows = existing.ok ? await existing.json() : [];
-      article = existingRows[0];
-    }
+    if (!article) { const existing = await fetch(`${supabaseUrl}/rest/v1/articles?select=id&url_fingerprint=eq.${fingerprint}`, { headers: auth }); const rows = existing.ok ? await existing.json() : []; article = rows[0]; }
     if (article) {
-      await fetch(`${supabaseUrl}/rest/v1/post_concepts?on_conflict=article_id`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ article_id: article.id, user_id: user.id, summary: item.summary.slice(0, 200), post_type: item.post_type, panel_count: item.panel_count ?? (item.post_type === "carousel" ? 5 : 1), image_summary: item.image_summary ?? {}, detailed_prompt: null, caption: item.caption, hashtags: item.hashtags ?? [] }) });
+      await fetch(`${supabaseUrl}/rest/v1/post_concepts?on_conflict=article_id`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ article_id: article.id, user_id: user.id, summary: item.summary.slice(0, 200), post_type: item.post_type, panel_count: item.panel_count ?? (item.post_type === "carousel" ? 5 : 1), image_summary: item.image_summary ?? {}, detailed_prompt: null, caption: item.caption, hashtags: normalizeHashtags(item.hashtags) }) });
       records.push(article.id);
     }
   }
