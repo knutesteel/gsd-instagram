@@ -44,7 +44,8 @@ export default async function handler(req, res) {
     return file.ok ? { ...item, text_content: await file.text() } : item;
   }));
   const guide = (kind) => {
-    const direct = guides.find((item) => item.kind === kind && item.text_content?.trim());
+    const promptAsset = guides.find((item) => item.kind === kind && /prompt\.md$/i.test(item.file_name ?? "") && item.text_content?.trim());
+    const direct = promptAsset ?? guides.find((item) => item.kind === kind && item.text_content?.trim());
     if (direct) return direct.text_content;
     const clue = kind === "voice_guide" ? /voice/i : /visual|image/i;
     return guides.find((item) => clue.test(item.file_name ?? "") && item.text_content?.trim())?.text_content ?? "";
@@ -67,12 +68,9 @@ export default async function handler(req, res) {
     }
   }
   const content = concept.image_summary?.content ?? "";
-  const panelPrompt = (sequence) => `Create only Instagram carousel panel ${sequence} of ${count}, vertical 4:5. This is a Hank-and-the-squirrel conversation about the article, never a standalone infographic or generic scene.
+  const sharedPrompt = `Create an Instagram carousel sequence, vertical 4:5. This is a Hank-and-the-squirrel conversation about the article, never a standalone infographic or generic scene.
 
-CURRENT PANEL BRIEF — follow exactly:
-${panelBrief(content, sequence)}
-
-NON-NEGOTIABLE CHARACTER CONTINUITY: Hank and the squirrel must both appear in this panel as the same approved characters from the saved Image Prompt. Hank is a raccoon, never a human. Preserve the same characters, outfits, body proportions, illustration style, desk/room, lighting, palette, and scene geography throughout the carousel. Carry recurring props forward logically: do not make an object vanish, switch hands, or change state without an on-panel reason. Do not redesign either character. Use the exact Hank and the squirrel dialogue from the panel brief in two separate, legible speech bubbles connected to the correct speaker. Never replace their conversation with narration, text overlays, or a one-character panel.
+NON-NEGOTIABLE CHARACTER CONTINUITY: Hank and the squirrel must both appear in every panel as the same approved characters from the saved Image Prompt. Hank is a raccoon, never a human. Preserve the same characters, outfits, body proportions, illustration style, desk/room, lighting, palette, and scene geography throughout the carousel. Carry recurring props forward logically: do not make an object vanish, switch hands, or change state without an on-panel reason. Do not redesign either character. Use the exact Hank and the squirrel dialogue from each panel brief in two separate, legible speech bubbles connected to the correct speaker. Never replace their conversation with narration, text overlays, or a one-character panel.
 
 ARTICLE-SPECIFIC SETTING: ${concept.image_summary?.setting ?? ""}
 
@@ -84,11 +82,15 @@ ${voiceGuide}
 ${visualGuide}
 ===== END VISUAL / IMAGE GUIDE =====
 
-${reference ? "The attached previous panel is the visual source of truth. Preserve it exactly for characters, wardrobe, setting, proportions, art style, and palette; change only the panel action and dialogue." : "This is the master character-and-setting reference panel for the carousel. Establish the Visual Guide precisely so it can anchor every later panel."}
-${requestedChange ? `Requested change: ${requestedChange}` : ""}`;
+${reference ? "The attached previous panel is the visual source of truth. Preserve it exactly for characters, wardrobe, setting, proportions, art style, and palette; change only the requested panel action and dialogue." : "Treat the first panel as the master reference for the whole sequence; keep every later panel visually continuous with it."}`;
+  const panelPrompt = (sequence) => `PANEL ${sequence} OF ${count} — follow exactly:
+
+CURRENT PANEL BRIEF — follow exactly:
+${panelBrief(content, sequence)}`;
   const prompt = requestedSequence
-    ? panelPrompt(sequences[0])
-    : `Create one ordered set of ${count} separate Instagram carousel images in this single generation request. Return image 1 for panel 1, image 2 for panel 2, and so on. These are sequential panels in the same scene, not variations of one image. Keep the characters, setting, lighting, prop state, and visual treatment identical across the set except for the story action specified for each panel.\n\n${sequences.map((sequence) => `===== IMAGE ${sequence} / PANEL ${sequence} =====\n${panelPrompt(sequence)}`).join("\n\n")}`;
+    ? `${sharedPrompt}\n\n${panelPrompt(sequences[0])}\n\n${requestedChange ? `Requested change: ${requestedChange}` : ""}`
+    : `${sharedPrompt}\n\nCreate one ordered set of ${count} separate Instagram carousel images in this single generation request. Return image 1 for panel 1, image 2 for panel 2, and so on. These are sequential panels in the same scene, not variations of one image.\n\n${sequences.map((sequence) => `===== IMAGE ${sequence} / PANEL ${sequence} =====\n${panelPrompt(sequence)}`).join("\n\n")}`;
+  if (prompt.length > 32000) return res.status(422).json({ error: `The combined generation prompt is ${prompt.length.toLocaleString()} characters. Keep the saved Voice and Image Prompts under 30,000 characters combined, then try again.` });
   const imageResponse = await createImage(openaiKey, prompt, reference, requestedSequence ? 1 : count);
   if (!imageResponse.ok) return res.status(502).json({ error: `Image provider error: ${await imageResponse.text()}` });
   const image = await imageResponse.json();
