@@ -92,7 +92,7 @@ function App() {
     if (!supabase || !userId) return;
     supabase.from("articles").select("id,title,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
@@ -182,7 +182,7 @@ function App() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
     await supabase.from("articles").select("id,title,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "Carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -294,7 +294,10 @@ function App() {
         )}
         {screen === "preview" && (
           <Preview
+            story={active}
+            concept={concept}
             caption={caption}
+            loadAssets={loadAssets}
             back={() => setScreen("produce")}
             notify={notify}
           />
@@ -560,6 +563,7 @@ function Discover({
   const [manualUrl, setManualUrl] = useState("");
   const [searchText, setSearchText] = useState("");
   const [topicInput, setTopicInput] = useState("");
+  const [timeframe, setTimeframe] = useState("48");
   const [topics, setTopics] = useState(["Attention & Brain", "Animal Behavior", "Weird Human News", "Productivity Tips", "Science & Space"]);
   const [queued, setQueued] = useState<string[]>([]);
   const addTopic = () => { const value = topicInput.trim(); if (value && !topics.includes(value)) setTopics([...topics, value]); setTopicInput(""); };
@@ -568,7 +572,7 @@ function Discover({
     if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search phrase or at least one topic.");
     setSearching(true);
     try {
-      const result = await research({ mode, manualUrl: manualUrl.trim(), searchText: searchText.trim(), topics, timeframe: 48 });
+      const result = await research({ mode, manualUrl: manualUrl.trim(), searchText: searchText.trim(), topics, timeframe });
       setQueued(mode === "manual" ? ["Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
       notify(`${result.count} ${result.count === 1 ? "story" : "stories"} added to your dashboard.`);
       if (mode === "manual" && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
@@ -595,9 +599,10 @@ function Discover({
           {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : <><Field label="What should we search for?"><input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="e.g. surprising focus research or clever animal behavior" /></Field>
           <label className="field-label">
             Timeframe
-            <select defaultValue="48">
+            <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
               <option value="48">Last 48 hours</option>
-              <option>Last 24 hours</option>
+              <option value="24">Last 24 hours</option>
+              <option value="anytime">Anytime</option>
             </select>
           </label>
           <p className="field-label">Topics</p>
@@ -736,7 +741,7 @@ function Detail({
           <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
           <Field label="URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
           <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
-          <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="Carousel">Five-panel Instagram carousel</option><option value="Single image">Single image</option><option value="Reel">Reel</option></select></Field>
+          <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Five-panel Instagram carousel</option><option value="single_image">Single image</option><option value="multi_pane_cartoon">Multi-pane cartoon</option><option value="reel">Reel</option></select></Field>
           <Field label="Panels"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
           <Field label="Setting"><textarea style={{ minHeight: 95 }} value={values.setting} onChange={(e) => update("setting", e.target.value)} /></Field>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
@@ -953,14 +958,24 @@ function Produce({
   );
 }
 function Preview({
+  story,
+  concept,
   caption,
+  loadAssets,
   back,
   notify,
 }: {
+  story: Story;
+  concept: Concept | null;
   caption: string;
+  loadAssets: (articleId: string) => Promise<GeneratedAsset[]>;
   back: () => void;
   notify: (m: string) => void;
 }) {
+  const [assets, setAssets] = useState<GeneratedAsset[]>([]);
+  const [active, setActive] = useState(0);
+  useEffect(() => { setActive(0); void loadAssets(story.id).then((saved) => setAssets(saved)).catch(() => setAssets([])); }, [story.id, loadAssets]);
+  const current = assets[active];
   return (
     <section>
       <header className="preview-header">
@@ -988,10 +1003,7 @@ function Preview({
             <FiMoreHorizontal />
           </div>
           <div className="post-image">
-            <img
-              src="/assets/hank-squirrel-preview.png"
-              alt="Hank and the squirrel carousel preview"
-            />
+            {current ? <img src={current.url} alt={`${story.title} panel ${current.sequence}`} /> : <p style={{ padding: 28 }}>No generated images for this article yet.</p>}
           </div>
           <div className="post-controls">
             <span>♡</span>
@@ -1000,20 +1012,16 @@ function Preview({
             <span className="save">♧</span>
           </div>
           <div className="dots">
-            <i className="on" />
-            <i />
-            <i />
-            <i />
-            <i />
+            {assets.map((asset, index) => <button key={asset.id} aria-label={`Show panel ${asset.sequence}`} onClick={() => setActive(index)}><i className={index === active ? "on" : ""} /></button>)}
           </div>
         </div>
         <aside className="post-details">
           <h2>Post details</h2>
           <b>Caption</b>
-          <p>{caption}</p>
+          <p>{caption || concept?.caption || "No caption has been generated for this article yet."}</p>
           <b>Hashtags</b>
           <div className="hashtags">
-            {[].map(
+            {(concept?.hashtags ?? []).map(
               (x) => (
                 <span key={x}>
                   {x} <FiX />
@@ -1026,11 +1034,11 @@ function Preview({
             <button>Grid preview</button>
           </div>
           <div className="mini-grid">
-            {Array.from({ length: 9 }, (_, i) => (
+            {assets.map((asset) => (
               <img
-                key={i}
-                src="/assets/carousel-production.png"
-                alt="Carousel grid thumbnail"
+                key={asset.id}
+                src={asset.url}
+                alt={`Panel ${asset.sequence}`}
               />
             ))}
           </div>
