@@ -5,7 +5,7 @@ const panelBrief = (content, sequence) => {
   const match = String(content ?? "").match(new RegExp(`(?:^|\\n\\s*)Panel\\s+${sequence}\\s*[—:-]([\\s\\S]*?)(?=\\n\\s*Panel\\s+\\d+\\s*[—:-]|$)`, "i"));
   return match?.[0] ?? `Panel ${sequence}: Hank and the squirrel discuss the article together.`;
 };
-const createImage = async (openaiKey, prompt, reference) => {
+const createImage = async (openaiKey, prompt, reference, count = 1) => {
   if (reference) {
     const form = new FormData();
     form.append("model", "gpt-image-1-mini");
@@ -16,7 +16,7 @@ const createImage = async (openaiKey, prompt, reference) => {
     form.append("output_format", "png");
     return fetch("https://api.openai.com/v1/images/edits", { method: "POST", headers: { Authorization: `Bearer ${openaiKey}` }, body: form });
   }
-  return fetch("https://api.openai.com/v1/images/generations", { method: "POST", headers: { ...json, Authorization: `Bearer ${openaiKey}` }, body: JSON.stringify({ model: "gpt-image-1-mini", prompt, size: "1024x1536", quality: "medium", output_format: "png" }) });
+  return fetch("https://api.openai.com/v1/images/generations", { method: "POST", headers: { ...json, Authorization: `Bearer ${openaiKey}` }, body: JSON.stringify({ model: "gpt-image-1-mini", prompt, n: count, size: "1024x1536", quality: "medium", output_format: "png" }) });
 };
 
 export default async function handler(req, res) {
@@ -66,9 +66,8 @@ export default async function handler(req, res) {
       if (stored.ok) reference = Buffer.from(await stored.arrayBuffer());
     }
   }
-  for (const sequence of sequences) {
-    const content = concept.image_summary?.content ?? "";
-    const prompt = `Create only Instagram carousel panel ${sequence} of ${count}, vertical 4:5. This is a Hank-and-the-squirrel conversation about the article, never a standalone infographic or generic scene.
+  const content = concept.image_summary?.content ?? "";
+  const panelPrompt = (sequence) => `Create only Instagram carousel panel ${sequence} of ${count}, vertical 4:5. This is a Hank-and-the-squirrel conversation about the article, never a standalone infographic or generic scene.
 
 CURRENT PANEL BRIEF — follow exactly:
 ${panelBrief(content, sequence)}
@@ -87,13 +86,18 @@ ${visualGuide}
 
 ${reference ? "The attached previous panel is the visual source of truth. Preserve it exactly for characters, wardrobe, setting, proportions, art style, and palette; change only the panel action and dialogue." : "This is the master character-and-setting reference panel for the carousel. Establish the Visual Guide precisely so it can anchor every later panel."}
 ${requestedChange ? `Requested change: ${requestedChange}` : ""}`;
-    const imageResponse = await createImage(openaiKey, prompt, reference);
-    if (!imageResponse.ok) return res.status(502).json({ error: `Image provider error: ${await imageResponse.text()}` });
-    const image = await imageResponse.json();
-    const base64 = image.data?.[0]?.b64_json;
+  const prompt = requestedSequence
+    ? panelPrompt(sequences[0])
+    : `Create one ordered set of ${count} separate Instagram carousel images in this single generation request. Return image 1 for panel 1, image 2 for panel 2, and so on. These are sequential panels in the same scene, not variations of one image. Keep the characters, setting, lighting, prop state, and visual treatment identical across the set except for the story action specified for each panel.\n\n${sequences.map((sequence) => `===== IMAGE ${sequence} / PANEL ${sequence} =====\n${panelPrompt(sequence)}`).join("\n\n")}`;
+  const imageResponse = await createImage(openaiKey, prompt, reference, requestedSequence ? 1 : count);
+  if (!imageResponse.ok) return res.status(502).json({ error: `Image provider error: ${await imageResponse.text()}` });
+  const image = await imageResponse.json();
+  const generated = image.data ?? [];
+  if (generated.length < sequences.length) return res.status(502).json({ error: "Image provider returned fewer carousel panels than requested." });
+  for (const [index, sequence] of sequences.entries()) {
+    const base64 = generated[index]?.b64_json;
     if (!base64) return res.status(502).json({ error: "Image provider returned no image data." });
     const path = `${user.id}/${concept.id}/${sequence}-${randomUUID()}.png`;
-    reference = Buffer.from(base64, "base64");
     const upload = await fetch(`${supabaseUrl}/storage/v1/object/post-assets/${path}`, { method: "POST", headers: { ...auth, "Content-Type": "image/png", "x-upsert": "true" }, body: Buffer.from(base64, "base64") });
     if (!upload.ok) return res.status(502).json({ error: `Couldn’t save generated image: ${await upload.text()}` });
     const assetResponse = await fetch(`${supabaseUrl}/rest/v1/assets`, { method: "POST", headers: { ...auth, ...json, Prefer: "return=representation" }, body: JSON.stringify({ concept_id: concept.id, user_id: user.id, sequence, media_type: "image", source: "generated", storage_path: path, mime_type: "image/png", generation_prompt: prompt, requested_change: requestedChange || null, is_active: true }) });

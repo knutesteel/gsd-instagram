@@ -245,9 +245,11 @@ function App() {
             }}
             onProduce={(id) => {
               setSelected(id);
-              produce();
+              void loadConcept(id);
+              setScreen("detail");
+              window.setTimeout(() => document.getElementById("generated-content")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
             }}
-            onViewAssets={(id) => { setSelected(id); setScreen("produce"); }}
+            onViewAssets={(id) => { setSelected(id); void loadConcept(id); setScreen("detail"); window.setTimeout(() => document.getElementById("generated-content")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }}
             onDiscard={discard}
             onStatus={(id, status) => { setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item)); void updateStatus(id, status.toLowerCase() as "new" | "produced" | "ready" | "posted"); }}
           />
@@ -271,7 +273,8 @@ function App() {
             notify={notify}
             previous={() => navigate(-1)}
             next={() => navigate(1)}
-            produce={produce}
+            generateAssets={generateAssets}
+            loadAssets={loadAssets}
             discard={() => discard(active.id)}
           />
         )}
@@ -671,44 +674,55 @@ function Detail({
   concept,
   previous,
   next,
-  produce,
   discard,
   saveDetail,
   generatePrompt,
   reanalyze,
+  generateAssets,
+  loadAssets,
   notify,
 }: {
   story: Story;
   concept: Concept | null;
   previous: () => void;
   next: () => void;
-  produce: () => void;
   discard: () => void;
   saveDetail: (id: string, values: DetailValues) => Promise<void>;
   generatePrompt: (id: string, values: Record<string, unknown>) => Promise<string>;
   reanalyze: () => Promise<unknown>;
+  generateAssets: (articleId: string, requestedChange?: string, sequence?: number) => Promise<GeneratedAsset[]>;
+  loadAssets: (articleId: string) => Promise<GeneratedAsset[]>;
   notify: (message: string) => void;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
   const [busy, setBusy] = useState("");
+  const [assets, setAssets] = useState<GeneratedAsset[]>([]);
+  const [activeAsset, setActiveAsset] = useState(0);
+  const [assetChange, setAssetChange] = useState("");
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
+  useEffect(() => { setAssets([]); setActiveAsset(0); void loadAssets(story.id).then((saved) => setAssets(saved)).catch(() => undefined); }, [story.id, loadAssets]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
   const prompt = async () => { setBusy("prompt"); try { const generated = await generatePrompt(story.id, values); setValues((old) => ({ ...old, prompt: generated })); notify("Full production prompt generated from your saved guidance."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t generate the prompt."); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
+  const generateContent = async () => { setBusy("content"); try { const created = await generateAssets(story.id); setAssets(created.sort((a, b) => a.sequence - b.sequence)); setActiveAsset(0); notify(`${created.length} content image${created.length === 1 ? "" : "s"} generated.`); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t generate content."); } finally { setBusy(""); } };
+  const regenerateAsset = async () => { const current = assets[activeAsset]; if (!current) return; setBusy("asset"); try { const [replacement] = await generateAssets(story.id, assetChange, current.sequence); if (!replacement) throw new Error("No replacement image was returned."); setAssets((old) => old.map((asset) => asset.sequence === replacement.sequence ? replacement : asset)); setAssetChange(""); notify(`Panel ${current.sequence} regenerated.`); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t regenerate this panel."); } finally { setBusy(""); } };
+  const currentAsset = assets[activeAsset];
   return (
     <section>
       <div className="detail-top">
         <p>
           Story queue <span>/</span> {story.title}
         </p>
-        <div>
+        <div className="detail-actions">
+          <div className="detail-navigation">
           <button onClick={previous}>
             <FiArrowLeft /> Previous
           </button>
           <button onClick={next}>
             Next <FiArrowRight />
           </button>
+          </div>
           <button onClick={discard}>
             <FiTrash2 /> Discard
           </button>
@@ -733,7 +747,12 @@ function Detail({
           <button className="button primary wide" onClick={prompt} disabled={Boolean(busy)}><FiFileText /> {busy === "prompt" ? "Generating prompt…" : values.prompt ? "Regenerate Prompt" : "Generate Prompt"}</button>
         </div>
       </div>
-      {values.prompt && <div style={{ marginTop: 28 }}><Field label="Full production prompt"><textarea className="tall" style={{ minHeight: 420, lineHeight: 1.65 }} value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field><button className="button primary wide" style={{ marginTop: 18 }} onClick={produce}><FiImage /> Generate Post</button></div>}
+      {values.prompt && <div style={{ marginTop: 28 }}><Field label="Full production prompt"><textarea className="tall" style={{ minHeight: 420, lineHeight: 1.65 }} value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field><button className="button primary wide" style={{ marginTop: 18 }} onClick={() => void generateContent()} disabled={Boolean(busy)}><FiImage /> {busy === "content" ? "Generating content…" : "Generate Post"}</button></div>}
+      <section id="generated-content" className="detail-generated-content">
+        <h2>Content</h2>
+        <p>Generated carousel images for this article.</p>
+        {currentAsset ? <><div className="detail-asset-stage"><img src={currentAsset.url} alt={`Generated carousel panel ${currentAsset.sequence}`} />{assets.length > 1 && <><button aria-label="Previous image" className="asset-arrow previous" onClick={() => setActiveAsset((index) => (index - 1 + assets.length) % assets.length)}><FiArrowLeft /></button><button aria-label="Next image" className="asset-arrow next" onClick={() => setActiveAsset((index) => (index + 1) % assets.length)}><FiArrowRight /></button></>}</div><div className="detail-asset-thumbnails">{assets.map((asset, index) => <button key={asset.id} aria-label={`Show panel ${asset.sequence}`} className={index === activeAsset ? "active" : ""} onClick={() => setActiveAsset(index)}><img src={asset.url} alt="" /></button>)}</div><Field label={`Regenerate panel ${currentAsset.sequence}`}><textarea value={assetChange} onChange={(event) => setAssetChange(event.target.value)} placeholder="What would you like to change?" /></Field><button className="button wide" onClick={() => void regenerateAsset()} disabled={Boolean(busy)}><FiRefreshCw /> {busy === "asset" ? "Regenerating…" : "Regenerate image"}</button></> : <p className="detail-content-empty">Generate the post after creating its full production prompt. Images will appear here.</p>}
+      </section>
     </section>
   );
 }

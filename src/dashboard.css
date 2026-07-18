@@ -24,3 +24,90 @@
 .content-link:hover {
   color: #bd4b2e;
 }
+
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.detail-navigation {
+  position: sticky;
+  top: 14px;
+  z-index: 8;
+  display: flex;
+  gap: 10px;
+  padding: 5px;
+  border: 1px solid #ded8ca;
+  border-radius: 11px;
+  background: rgba(255, 253, 249, 0.96);
+  box-shadow: 0 5px 14px rgba(43, 45, 34, 0.1);
+}
+
+.detail-generated-content {
+  margin-top: 32px;
+  padding: 26px;
+  border: 1px solid #e4ded3;
+  border-radius: 16px;
+  background: #fffdf9;
+}
+
+.detail-generated-content h2 {
+  margin: 0;
+  font-family: "Playfair Display", serif;
+  font-size: 30px;
+}
+
+.detail-generated-content > p {
+  margin: 7px 0 20px;
+  color: #625f57;
+}
+
+.detail-asset-stage {
+  position: relative;
+  min-height: 420px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #1b1e19;
+}
+
+.detail-asset-stage img {
+  display: block;
+  width: 100%;
+  height: 560px;
+  object-fit: contain;
+}
+
+.asset-arrow {
+  position: absolute;
+  top: 50%;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.94);
+  transform: translateY(-50%);
+}
+
+.asset-arrow.previous { left: 14px; }
+.asset-arrow.next { right: 14px; }
+
+.detail-asset-thumbnails {
+  display: flex;
+  gap: 10px;
+  padding: 13px 0 6px;
+  overflow-x: auto;
+}
+
+.detail-asset-thumbnails button {
+  flex: 0 0 auto;
+  width: 64px;
+  height: 86px;
+  overflow: hidden;
+  border: 3px solid transparent;
+  border-radius: 8px;
+}
+
+.detail-asset-thumbnails button.active { border-color: #d05335; }
+.detail-asset-thumbnails img { width: 100%; height: 100%; object-fit: cover; }
+.detail-content-empty { padding: 28px 0; color: #625f57; }
