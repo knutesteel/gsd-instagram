@@ -31,6 +31,7 @@ type Screen =
 type Story = {
   id: string;
   title: string;
+  createdAt: string | null;
   overview: string;
   category: string;
   score: number;
@@ -75,9 +76,9 @@ function App() {
   }, []);
   useEffect(() => {
     if (!supabase || !userId) return;
-    supabase.from("articles").select("id,title,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data, error }) => {
+    supabase.from("articles").select("id,title,created_at,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("created_at", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved to Post" : "New") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved to Post" : "New") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
@@ -135,8 +136,8 @@ function App() {
     const response = await fetch("/api/research", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify(payload) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
-    await supabase.from("articles").select("id,title,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved to Post" : "New") as Story["status"] }));
+    await supabase.from("articles").select("id,title,created_at,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("created_at", { ascending: false }).then(({ data: rows }) => {
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved to Post" : "New") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -371,7 +372,14 @@ function Dashboard({
   const [category, setCategory] = useState("all");
   const [type, setType] = useState("all");
   const [minimumScore, setMinimumScore] = useState("0");
-  const shown = items.filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore));
+  const [dateSort, setDateSort] = useState<"newest" | "oldest">("newest");
+  const shown = items
+    .filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore))
+    .sort((a, b) => {
+      const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateSort === "newest" ? bDate - aDate : aDate - bDate;
+    });
   const categories = [...new Set(items.map((item) => item.category))];
   const types = [...new Set(items.map((item) => item.type))];
   return (
@@ -402,10 +410,12 @@ function Dashboard({
         <select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select value={minimumScore} onChange={(e) => setMinimumScore(e.target.value)}><option value="0">Any score</option><option value="90">90+</option><option value="75">75+</option><option value="60">60+</option></select>
         <select value={type} onChange={(e) => setType(e.target.value)}><option value="all">All post types</option>{types.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+        <select value={dateSort} onChange={(e) => setDateSort(e.target.value as "newest" | "oldest")} aria-label="Sort by date added"><option value="newest">Date added: Newest first</option><option value="oldest">Date added: Oldest first</option></select>
       </div>
       <div className="story-table">
         <div className="story-head">
           <span>Story</span>
+          <span>Date added</span>
           <span>Category</span>
           <span>Score</span>
           <span>Post type</span>
@@ -419,6 +429,7 @@ function Dashboard({
               <h3><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
               <p>{item.overview}</p>
             </div>
+            <time className="date-added" dateTime={item.createdAt ?? undefined}>{formatAddedDate(item.createdAt)}</time>
             <span className="chip">{item.category}</span>
             <span className="score">{item.score}</span>
             <span className="type">{item.type}</span>
@@ -437,6 +448,14 @@ function Dashboard({
     </section>
   );
 }
+
+function formatAddedDate(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
 function Metric({
   number,
   label,
