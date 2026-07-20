@@ -112,6 +112,14 @@
 .detail-asset-thumbnails img { width: 100%; height: 100%; object-fit: cover; }
 .detail-content-empty { padding: 28px 0; color: #625f57; }
 
+.article-detail-summary {
+  max-width: 920px;
+  margin: -8px 0 28px;
+  color: #514c44;
+  font-size: 1.04rem;
+  line-height: 1.65;
+}
+
 .generated-post-copy {
   margin: 16px 0 8px;
   padding: 18px;

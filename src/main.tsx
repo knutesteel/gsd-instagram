@@ -170,6 +170,20 @@ function App() {
     await loadConcept(articleId);
     return result.prompt as string;
   };
+  const sendForGeneration = async (articleId: string, values: DetailValues) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    await saveDetail(articleId, values);
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/send-for-generation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
+      body: JSON.stringify({ articleId }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "Couldn’t send this article to the generation sheet.");
+    return result as { updatedRange?: string };
+  };
   const navigate = (next: number) => {
     const index = items.findIndex((i) => i.id === selected);
     setSelected(items[(index + next + items.length) % items.length].id);
@@ -276,6 +290,7 @@ function App() {
             generateAssets={generateAssets}
             loadAssets={loadAssets}
             discard={() => discard(active.id)}
+            sendForGeneration={sendForGeneration}
           />
         )}
         {screen === "produce" && (
@@ -685,6 +700,7 @@ function Detail({
   reanalyze,
   generateAssets,
   loadAssets,
+  sendForGeneration,
   notify,
 }: {
   story: Story;
@@ -697,6 +713,7 @@ function Detail({
   reanalyze: () => Promise<unknown>;
   generateAssets: (articleId: string, requestedChange?: string, sequence?: number) => Promise<GeneratedAsset[]>;
   loadAssets: (articleId: string) => Promise<GeneratedAsset[]>;
+  sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
   notify: (message: string) => void;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
@@ -711,6 +728,7 @@ function Detail({
   const prompt = async () => { setBusy("prompt"); try { const generated = await generatePrompt(story.id, values); setValues((old) => ({ ...old, prompt: generated })); notify("Full production prompt generated from your saved guidance."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t generate the prompt."); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
   const generateContent = async () => { setBusy("content"); try { await saveDetail(story.id, values); const created = await generateAssets(story.id); setAssets(created.sort((a, b) => a.sequence - b.sequence)); setActiveAsset(0); notify(`${created.length} content image${created.length === 1 ? "" : "s"} generated.`); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t generate content."); } finally { setBusy(""); } };
+  const send = async () => { setBusy("sheet"); try { await sendForGeneration(story.id, values); notify("Article sent to the Google Sheet for generation."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet."); } finally { setBusy(""); } };
   const regenerateAsset = async () => { const current = assets[activeAsset]; if (!current) return; setBusy("asset"); try { const [replacement] = await generateAssets(story.id, assetChange, current.sequence); if (!replacement) throw new Error("No replacement image was returned."); setAssets((old) => old.map((asset) => asset.sequence === replacement.sequence ? replacement : asset)); setAssetChange(""); notify(`Panel ${current.sequence} regenerated.`); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t regenerate this panel."); } finally { setBusy(""); } };
   const currentAsset = assets[activeAsset];
   return (
@@ -736,6 +754,7 @@ function Detail({
         </div>
       </div>
       <h1>Article detail</h1>
+      <p className="article-detail-summary">{values.summary || "No article summary has been saved yet."}</p>
       <div className="detail-grid">
         <div className="left-fields">
           <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
@@ -750,6 +769,7 @@ function Detail({
         <div className="right-fields">
           <Field label="Content"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
           <button className="button primary wide" onClick={prompt} disabled={Boolean(busy)}><FiFileText /> {busy === "prompt" ? "Generating prompt…" : values.prompt ? "Regenerate Prompt" : "Generate Prompt"}</button>
+          <button className="button wide" style={{ marginTop: 12 }} onClick={() => void send()} disabled={Boolean(busy)}><FiExternalLink /> {busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
         </div>
       </div>
       {values.prompt && <div style={{ marginTop: 28 }}><Field label="Full production prompt"><textarea className="tall" style={{ minHeight: 420, lineHeight: 1.65 }} value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field><button className="button primary wide" style={{ marginTop: 18 }} onClick={() => void generateContent()} disabled={Boolean(busy)}><FiImage /> {busy === "content" ? "Generating content…" : "Generate Content"}</button></div>}
@@ -761,7 +781,7 @@ function Detail({
     </section>
   );
 }
-type DetailValues = { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; prompt: string; caption: string; hashtags: string };
+type DetailValues = { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; prompt: string; caption: string; hashtags: string; summary: string };
 function normalizeHashtags(value: string) {
   const cleaned = value.split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean).map((tag) => `#${tag.replace(/^#/, "").toLowerCase()}`);
   return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
@@ -781,7 +801,7 @@ function formatPanelContent(value: string) {
 function detailValues(story: Story, concept: Concept | null): DetailValues {
   const image = concept?.image_summary ?? {};
   const content = formatPanelContent(image.content ?? concept?.detailed_prompt ?? "");
-  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" ") };
+  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" "), summary: concept?.summary ?? story.overview ?? "" };
 }
 function Field({
   label,

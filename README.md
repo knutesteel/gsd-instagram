@@ -28,3 +28,14 @@ Import the GitHub repository into Vercel. The included `vercel.json` builds the 
 This is an interactive frontend MVP with seeded content. Live web research, article extraction, asset-generation providers, user authentication, and persistent storage are intentionally not wired in yet.
 Deployment trigger
 Verified stylesheet deployment
+# Send articles to Google Sheets
+
+The Article detail **Send for Generation** button appends a row to the configured Google Sheet with `Created`, `Status`, `Article Title`, `Source URL`, `Article Summary`, `Format`, and `Content (Suggested Prompt)`.
+
+In Vercel, add these Production environment variables:
+
+- `GOOGLE_GENERATION_SHEET_ID` — defaults to the GSD-Instagram generation Sheet when omitted.
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+- `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` — paste the complete private-key value from the service-account JSON; Vercel accepts literal `\n` sequences.
+
+Share the Google Sheet with the service-account email as an **Editor**. The API key stays in Vercel and is never sent to the browser.
