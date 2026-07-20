@@ -114,7 +114,13 @@ export default async function handler(req, res) {
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
     await copyColumnJFormula(accessToken, sourceFormulaRow, destinationRow);
     await formatAddedRow(accessToken, destinationRow);
-    return res.status(200).json({ updatedRange: result.updates?.updatedRange });
+    const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+      method: "PATCH",
+      headers: { ...auth, ...json, Prefer: "return=minimal" },
+      body: JSON.stringify({ generation_sheet_row: destinationRow }),
+    });
+    if (!rowUpdate.ok) throw new Error("Couldn’t save the Google Sheets row reference.");
+    return res.status(200).json({ updatedRange: result.updates?.updatedRange, sheetRow: destinationRow });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t add the row to Google Sheets." });
   }
