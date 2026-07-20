@@ -1,11 +1,13 @@
 import { createPrivateKey, sign } from "node:crypto";
 
-const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1gRQGMBFRRMxW2WZL-ZVGxJNQrCbG2PFpRXukD-1_Xyo";
+const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
 const driveFileId = (url) => String(url || "").match(/\/d\/([^/]+)/)?.[1] || String(url || "").match(/[?&]id=([^&]+)/)?.[1];
 const driveImageUrl = (url) => {
   const id = driveFileId(url);
-  return id ? `https://drive.google.com/uc?export=view&id=${id}` : url;
+  // Google Drive's file-view URL is an HTML page, not a dependable image source.
+  // The thumbnail endpoint renders directly in the app while the originals remain in Drive.
+  return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w1600` : url;
 };
 const extensionFor = (contentType) => contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
 async function googleToken() {
@@ -54,13 +56,22 @@ export default async function handler(req, res) {
     const sheet = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!sheet.ok) throw new Error("Couldn’t read the generation sheet.");
     const rows = (await sheet.json()).values ?? [];
-    const generated = rows.slice(1).filter((row) => String(row[1]).toLowerCase() === "generated" && row[3]);
-    const articles = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=in.(${generated.map((row) => row[3]).join(",")})&select=id,generation_identifier,post_concepts(id,image_summary)`, { headers });
+    const syncedRows = rows.slice(1).filter((row) => ["generated", "approved"].includes(String(row[1]).trim().toLowerCase()) && row[3]);
+    if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {} });
+    const articles = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=in.(${syncedRows.map((row) => row[3]).join(",")})&select=id,generation_identifier,post_concepts(id,image_summary)`, { headers });
     const items = await articles.json(); const updatedArticleIds = [];
-    for (const row of generated) {
+    const statuses = {};
+    for (const row of syncedRows) {
       const article = items.find((item) => item.generation_identifier === row[3]);
       const concept = article?.post_concepts?.[0];
       if (!concept) continue;
+      const sheetStatus = String(row[1]).trim().toLowerCase();
+      if (sheetStatus === "approved") {
+        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "approved_to_post" }) });
+        if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as approved.");
+        updatedArticleIds.push(article.id); statuses[article.id] = "Approved";
+        continue;
+      }
       const sourceImages = row.slice(12, 17).filter(Boolean);
       if (!sourceImages.length) continue;
       const images = sourceImages.map(driveImageUrl);
@@ -73,8 +84,8 @@ export default async function handler(req, res) {
       if (!conceptUpdate.ok) throw new Error("Couldn’t save the generated post content.");
       const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "generated" }) });
       if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as generated.");
-      updatedArticleIds.push(article.id);
+      updatedArticleIds.push(article.id); statuses[article.id] = "Generated";
     }
-    return res.status(200).json({ updatedArticleIds });
+    return res.status(200).json({ updatedArticleIds, statuses });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
 }
