@@ -41,7 +41,7 @@ type Story = {
   generationIdentifier?: string | null;
   generationSheetRow?: number | null;
 };
-type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
+type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };\ntype TrendingTopic = { title: string; summary: string; suggested_content: string };
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -528,6 +528,27 @@ function Discover({
   const [timeframe, setTimeframe] = useState("48");
   const [topics, setTopics] = useState(["Attention & Brain", "Animal Behavior", "Weird Human News", "Productivity Tips", "Science & Space"]);
   const [queued, setQueued] = useState<string[]>([]);
+  const [trends, setTrends] = useState<TrendingTopic[]>([]);
+  const [trendsLoading, setTrendsLoading] = useState(true);
+  const [trendsError, setTrendsError] = useState("");
+  const loadTrends = async () => {
+    setTrendsLoading(true);
+    setTrendsError("");
+    try {
+      const session = await supabase?.auth.getSession();
+      const token = session?.data.session?.access_token;
+      if (!token) throw new Error("Sign in required.");
+      const response = await fetch("/api/trending", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not load current trends.");
+      setTrends(body.topics ?? []);
+    } catch (error) {
+      setTrendsError(error instanceof Error ? error.message : "Could not load current trends.");
+    } finally {
+      setTrendsLoading(false);
+    }
+  };
+  useEffect(() => { void loadTrends(); }, []);
   const addTopic = () => { const value = topicInput.trim(); if (value && !topics.includes(value)) setTopics([...topics, value]); setTopicInput(""); };
   const run = async () => {
     if (mode === "manual" && !/^https?:\/\//i.test(manualUrl.trim())) return notify("Paste a complete article URL, starting with https://.");
@@ -584,21 +605,25 @@ function Discover({
             )}
           </button>
         </div>
-        <div className="panel requirements">
-          <h2>Research requirements</h2>
-          <Requirement
-            title="Direct, accessible sources"
-            text="Prioritize primary sources, official accounts, and first-hand reporting."
-          />
-          <Requirement
-            title="Category variety"
-            text="Cover multiple angles and source types across each search."
-          />
-          <Requirement
-            title="8–10 search queries"
-            text="Run targeted research across every topic area."
-          />
-        </div>
+        <aside className="panel trending-panel">
+          <div className="trending-header">
+            <div><h2>Trending now</h2><p>Fresh social conversations, selected for GSD-friendly storytelling.</p></div>
+            <button className="icon-button" aria-label="Refresh current trends" title="Refresh current trends" onClick={() => void loadTrends()} disabled={trendsLoading}><FiRefreshCw className={trendsLoading ? "spin" : ""} /></button>
+          </div>
+          {trendsLoading && <p className="trending-status">Finding current conversations…</p>}
+          {trendsError && <p className="trending-status">{trendsError}</p>}
+          {!trendsLoading && !trendsError && <div className="trending-list">
+            {trends.map((trend, index) => <article className="trending-item" key={`${trend.title}-${index}`}>
+              <span className="trending-number">{index + 1}</span>
+              <div>
+                <h3>{trend.title}</h3>
+                <p>{trend.summary}</p>
+                <b>Hank + squirrel</b>
+                <p className="trending-angle">{trend.suggested_content}</p>
+              </div>
+            </article>)}
+          </div>}
+        </aside>
       </div>
       <div className="panel progress">
         <h2>{searching ? "Preparing research" : queued.length ? "Queued research" : "Ready to research"}</h2>
