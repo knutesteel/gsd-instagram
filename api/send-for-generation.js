@@ -44,7 +44,7 @@ export default async function handler(req, res) {
   const articleId = req.body?.articleId;
   if (!articleId) return res.status(400).json({ error: "Article is required." });
 
-  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,detailed_prompt)`, { headers: auth });
+  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary)`, { headers: auth });
   if (!articleResponse.ok) return res.status(502).json({ error: "Couldn’t load the article for generation." });
   const article = (await articleResponse.json())[0];
   if (!article) return res.status(404).json({ error: "Article not found." });
@@ -53,7 +53,7 @@ export default async function handler(req, res) {
 
   try {
     const accessToken = await googleAccessToken();
-    const content = concept.detailed_prompt?.trim() || concept.image_summary.content;
+    const content = concept.image_summary.content;
     const values = [[
       new Date().toISOString().slice(0, 10),
       "New",

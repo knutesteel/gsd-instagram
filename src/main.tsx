@@ -4,7 +4,6 @@ import {
   FiArchive,
   FiArrowLeft,
   FiArrowRight,
-  FiBookOpen,
   FiCheck,
   FiChevronDown,
   FiClock,
@@ -13,31 +12,22 @@ import {
   FiExternalLink,
   FiFileText,
   FiGrid,
-  FiImage,
   FiMoreHorizontal,
   FiPlus,
   FiRefreshCw,
   FiSearch,
-  FiSettings,
   FiTrash2,
-  FiUploadCloud,
   FiX,
 } from "react-icons/fi";
 import "./styles.css";
 import "./dashboard.css";
 import { supabase, supabaseConfigured } from "./lib/supabase";
-import icpPromptAsset from "./prompt-assets/icp-prompt.md?raw";
-import voicePromptAsset from "./prompt-assets/voice-prompt.md?raw";
-import imagePromptAsset from "./prompt-assets/image-prompt.md?raw";
 
 type Screen =
   | "dashboard"
   | "discover"
   | "detail"
-  | "produce"
-  | "preview"
-  | "archive"
-  | "guidance";
+  | "archive";
 type Story = {
   id: string;
   title: string;
@@ -46,10 +36,9 @@ type Story = {
   score: number;
   url?: string;
   type: string;
-  status: "New" | "Produced" | "Ready" | "Posted" | "Archived";
+  status: "New" | "Sent to Sheets" | "Generated" | "Approved to Post" | "Archived";
 };
 type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, string>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
-type GeneratedAsset = { id: string; sequence: number; storage_path: string; url: string };
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -57,10 +46,7 @@ function App() {
   const [selected, setSelected] = useState("");
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
-  const [caption, setCaption] = useState("");
   const [concept, setConcept] = useState<Concept | null>(null);
-  const [change, setChange] = useState("");
-  const [productionRequest, setProductionRequest] = useState(0);
   const [toast, setToast] = useState("");
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [userId, setUserId] = useState<string | null>(null);
@@ -70,7 +56,6 @@ function App() {
     if (!supabase || !articleId) return;
     const { data } = await supabase.from("post_concepts").select("summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags").eq("article_id", articleId).maybeSingle();
     setConcept(data as Concept | null);
-    setCaption(data?.caption ?? "");
   };
   const notify = (message: string) => {
     setToast(message);
@@ -92,13 +77,13 @@ function App() {
     if (!supabase || !userId) return;
     supabase.from("articles").select("id,title,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved to Post" : "New") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
   }, [userId]);
   useEffect(() => { void loadConcept(selected); }, [selected]);
-  const updateStatus = async (id: string, status: "discarded" | "new" | "produced" | "ready" | "posted") => {
+  const updateStatus = async (id: string, status: "discarded" | "new" | "sent_to_sheets" | "generated" | "approved_to_post") => {
     if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
     if (error) notify(`Couldn’t save change: ${error.message}`);
@@ -113,42 +98,6 @@ function App() {
     );
     setScreen("dashboard");
   };
-  const generateAssets = async (articleId: string, requestedChange = "", sequence?: number) => {
-    if (!supabase) throw new Error("Supabase is not configured.");
-    const client = supabase;
-    const { data } = await client.auth.getSession();
-    if (!data.session) throw new Error("Please sign in again.");
-    const response = await fetch("/api/produce", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-      body: JSON.stringify({ articleId, requestedChange, sequence }),
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? "Couldn’t generate assets.");
-    const assets = await Promise.all((result.assets ?? []).map(async (asset: Omit<GeneratedAsset, "url">) => {
-      const { data: signed, error } = await client.storage.from("post-assets").createSignedUrl(asset.storage_path, 60 * 60);
-      if (error || !signed?.signedUrl) throw new Error(error?.message ?? "Couldn’t prepare generated image.");
-      return { ...asset, url: signed.signedUrl } as GeneratedAsset;
-    }));
-    setItems((old) => old.map((item) => item.id === articleId ? { ...item, status: "Produced" } : item));
-    void updateStatus(articleId, "produced");
-    return assets as GeneratedAsset[];
-  };
-  const loadAssets = async (articleId: string) => {
-    if (!supabase) return [] as GeneratedAsset[];
-    const client = supabase;
-    const { data: conceptRow } = await client.from("post_concepts").select("id").eq("article_id", articleId).maybeSingle();
-    if (!conceptRow) return [] as GeneratedAsset[];
-    const { data: rows } = await client.from("assets").select("id,sequence,storage_path").eq("concept_id", conceptRow.id).eq("is_active", true).order("sequence", { ascending: true });
-    return Promise.all((rows ?? []).map(async (asset) => {
-      const { data } = await client.storage.from("post-assets").createSignedUrl(asset.storage_path, 60 * 60);
-      return { ...asset, url: data?.signedUrl ?? "" } as GeneratedAsset;
-    }));
-  };
-  const produce = () => {
-    setScreen("produce");
-    setProductionRequest((request) => request + 1);
-  };
   const saveDetail = async (articleId: string, values: { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; caption: string; prompt: string; hashtags: string }) => {
     if (!supabase) return;
     const articleUpdate = await supabase.from("articles").update({ title: values.title, source_url: values.url, canonical_url: values.url, rank: values.score }).eq("id", articleId);
@@ -157,18 +106,7 @@ function App() {
     const conceptUpdate = await supabase.from("post_concepts").update({ post_type: values.postType, panel_count: values.panelCount, image_summary: { setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption, hashtags }).eq("article_id", articleId);
     if (conceptUpdate.error) throw new Error(conceptUpdate.error.message);
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, score: values.score, type: values.postType } : item));
-    setCaption(values.caption);
     await loadConcept(articleId);
-  };
-  const generatePrompt = async (articleId: string, values: Record<string, unknown>) => {
-    if (!supabase) throw new Error("Supabase is not configured.");
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) throw new Error("Please sign in again.");
-    const response = await fetch("/api/generate-prompt", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ articleId, ...values }) });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error ?? "Couldn’t generate the prompt.");
-    await loadConcept(articleId);
-    return result.prompt as string;
   };
   const sendForGeneration = async (articleId: string, values: DetailValues) => {
     if (!supabase) throw new Error("Supabase is not configured.");
@@ -182,6 +120,8 @@ function App() {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Couldn’t send this article to the generation sheet.");
+    setItems((old) => old.map((item) => item.id === articleId ? { ...item, status: "Sent to Sheets" } : item));
+    await updateStatus(articleId, "sent_to_sheets");
     return result as { updatedRange?: string };
   };
   const navigate = (next: number) => {
@@ -196,7 +136,7 @@ function App() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
     await supabase.from("articles").select("id,title,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("rank", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "produced" ? "Produced" : row.status === "ready" ? "Ready" : row.status === "posted" ? "Posted" : "New") as Story["status"] }));
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved to Post" : "New") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -217,16 +157,12 @@ function App() {
               { key: "dashboard", icon: <FiGrid />, label: "Dashboard" },
               { key: "discover", icon: <FiCompass />, label: "Discover" },
               { key: "archive", icon: <FiArchive />, label: "Archive" },
-              { key: "guidance", icon: <FiBookOpen />, label: "Prompt guidance" },
-              { key: "settings", icon: <FiSettings />, label: "Settings" },
             ] as const
           ).map((n) => (
             <button
               key={n.key}
               className={screen === n.key ? "nav-item active" : "nav-item"}
-              onClick={() =>
-                setScreen(n.key === "settings" ? "guidance" : n.key)
-              }
+              onClick={() => setScreen(n.key)}
             >
               {n.icon}
               <span>{n.label}</span>
@@ -257,15 +193,8 @@ function App() {
               void loadConcept(id);
               setScreen("detail");
             }}
-            onProduce={(id) => {
-              setSelected(id);
-              void loadConcept(id);
-              setScreen("detail");
-              window.setTimeout(() => document.getElementById("generated-content")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-            }}
-            onViewAssets={(id) => { setSelected(id); void loadConcept(id); setScreen("detail"); window.setTimeout(() => document.getElementById("generated-content")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); }}
             onDiscard={discard}
-            onStatus={(id, status) => { setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item)); void updateStatus(id, status.toLowerCase() as "new" | "produced" | "ready" | "posted"); }}
+            onStatus={(id, status) => { setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item)); void updateStatus(id, status === "Sent to Sheets" ? "sent_to_sheets" : status === "Generated" ? "generated" : status === "Approved to Post" ? "approved_to_post" : "new"); }}
           />
         )}
         {screen === "discover" && (
@@ -282,39 +211,12 @@ function App() {
             story={active}
             concept={concept}
             saveDetail={saveDetail}
-            generatePrompt={generatePrompt}
             reanalyze={() => research({ mode: "manual", manualUrl: active.url }).then(() => loadConcept(active.id))}
             notify={notify}
             previous={() => navigate(-1)}
             next={() => navigate(1)}
-            generateAssets={generateAssets}
-            loadAssets={loadAssets}
             discard={() => discard(active.id)}
             sendForGeneration={sendForGeneration}
-          />
-        )}
-        {screen === "produce" && (
-          <Produce
-            story={active}
-            productionRequest={productionRequest}
-            generateAssets={generateAssets}
-            loadAssets={loadAssets}
-            caption={caption}
-            setCaption={setCaption}
-            change={change}
-            setChange={setChange}
-            onPreview={() => setScreen("preview")}
-            notify={notify}
-          />
-        )}
-        {screen === "preview" && (
-          <Preview
-            story={active}
-            concept={concept}
-            caption={caption}
-            loadAssets={loadAssets}
-            back={() => setScreen("produce")}
-            notify={notify}
           />
         )}
         {screen === "archive" && (
@@ -330,7 +232,6 @@ function App() {
             }}
           />
         )}
-        {screen === "guidance" && <Guidance />}
       </main>
     </div>
   );
@@ -371,6 +272,7 @@ function AuthGate() {
   </form></main>;
 }
 
+/* Retired prompt-guidance implementation. Generation is now owned by the Google Sheets workflow.
 type PromptDocument = { id: string; kind: "icp" | "voice_guide" | "visual_guide"; file_name: string; storage_path: string; created_at: string; text_content?: string | null };
 const bundledPromptAssets = {
   icp: { fileName: "ICP Prompt.md", text: icpPromptAsset },
@@ -450,20 +352,18 @@ function Guidance() {
   return <section><header className="page-header"><div><h1>Prompt assets</h1><p>Your ICP, Voice, and Image prompts are the source of truth for research, prompt generation, and production. They are installed to your private workspace automatically.</p></div>{installing && <span className="chip"><FiRefreshCw className="spin" /> Installing prompts…</span>}</header><div className="guidance-grid">{card("icp", "ICP Prompt", "Defines the audience, emotional reality, and practical relevance every post should recognize.")}{card("voice_guide", "Voice Prompt", "Defines Hank and the squirrel’s writing voice, humor, dialogue, and brand guardrails.")}{card("visual_guide", "Image Prompt", "Defines character identity, scale, wardrobe, palette, composition, and continuity for generated assets.")}</div>{message && <p className="guidance-message">{message}</p>}{viewing && <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(24,28,22,.56)", zIndex: 20, display: "grid", placeItems: "center", padding: 24 }}><div style={{ position: "relative", width: "min(850px, 100%)", maxHeight: "82vh", overflow: "auto", background: "#fffdf9", borderRadius: 16, padding: 32, boxShadow: "0 22px 70px rgba(0,0,0,.28)" }}><button className="modal-close" style={{ position: "absolute", top: 16, right: 16, fontSize: 22 }} onClick={() => setViewing(null)}><FiX /></button><h2 style={{ fontFamily: "Playfair Display", fontSize: 32, margin: "0 0 6px" }}>{viewing.kind === "icp" ? "ICP Prompt" : viewing.kind === "voice_guide" ? "Voice Prompt" : "Image Prompt"}</h2><p style={{ color: "#777168", margin: "0 0 22px" }}>{viewing.file_name}</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 1.6, background: "#f5f2ea", padding: 20, borderRadius: 10, margin: 0 }}>{viewing.text_content || "This prompt asset does not contain viewable Markdown/text."}</pre></div></div>}<div className="panel guidance-note"><FiCheck /><div><b>Private prompt assets</b><p>These prompt assets are stored in your private Supabase bucket and used by future research and generation requests.</p></div></div></section>;
 }
 
+*/
+
 function Dashboard({
   items,
   discover,
   select,
-  onProduce,
-  onViewAssets,
   onDiscard,
   onStatus,
 }: {
   items: Story[];
   discover: () => void;
   select: (id: string) => void;
-  onProduce: (id: string) => void;
-  onViewAssets: (id: string) => void;
   onDiscard: (id: string) => void;
   onStatus: (id: string, status: Exclude<Story["status"], "Archived">) => void;
 }) {
@@ -487,7 +387,7 @@ function Dashboard({
       </header>
       <div className="metrics">
         <Metric number={String(items.length)} label="To review" icon={<FiFileText />} />
-        <Metric number="0" label="Produced" icon={<FiCheck />} />
+        <Metric number={String(items.filter((item) => item.status === "Generated").length)} label="Generated" icon={<FiCheck />} />
         <Metric number="0" label="Archived" icon={<FiArchive />} />
       </div>
       <div className="filter-row">
@@ -510,7 +410,6 @@ function Dashboard({
           <span>Score</span>
           <span>Post type</span>
           <span>Status</span>
-          <span>Content</span>
           <span>Actions</span>
         </div>
         {shown.length === 0 && <div className="empty-queue"><FiCompass /><h2>No stories in your queue yet</h2><p>Use Discover to find fresh, high-fit stories. Your discarded items remain protected from duplicates.</p><button className="button primary" onClick={discover}>Find fresh stories</button></div>}
@@ -523,12 +422,8 @@ function Dashboard({
             <span className="chip">{item.category}</span>
             <span className="score">{item.score}</span>
             <span className="type">{item.type}</span>
-            <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Produced</option><option>Ready</option><option>Posted</option></select>
-            <button className="content-link" onClick={() => onViewAssets(item.id)}>View content</button>
+            <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved to Post</option></select>
             <div className="actions">
-              <button className="outline" onClick={() => onProduce(item.id)}>
-                Generate
-              </button>
               <button
                 className="text-danger"
                 onClick={() => onDiscard(item.id)}
@@ -696,10 +591,7 @@ function Detail({
   next,
   discard,
   saveDetail,
-  generatePrompt,
   reanalyze,
-  generateAssets,
-  loadAssets,
   sendForGeneration,
   notify,
 }: {
@@ -709,28 +601,17 @@ function Detail({
   next: () => void;
   discard: () => void;
   saveDetail: (id: string, values: DetailValues) => Promise<void>;
-  generatePrompt: (id: string, values: Record<string, unknown>) => Promise<string>;
   reanalyze: () => Promise<unknown>;
-  generateAssets: (articleId: string, requestedChange?: string, sequence?: number) => Promise<GeneratedAsset[]>;
-  loadAssets: (articleId: string) => Promise<GeneratedAsset[]>;
   sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
   notify: (message: string) => void;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
   const [busy, setBusy] = useState("");
-  const [assets, setAssets] = useState<GeneratedAsset[]>([]);
-  const [activeAsset, setActiveAsset] = useState(0);
-  const [assetChange, setAssetChange] = useState("");
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
-  useEffect(() => { setAssets([]); setActiveAsset(0); void loadAssets(story.id).then((saved) => setAssets(saved)).catch(() => undefined); }, [story.id, loadAssets]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
-  const prompt = async () => { setBusy("prompt"); try { const generated = await generatePrompt(story.id, values); setValues((old) => ({ ...old, prompt: generated })); notify("Full production prompt generated from your saved guidance."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t generate the prompt."); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
-  const generateContent = async () => { setBusy("content"); try { await saveDetail(story.id, values); const created = await generateAssets(story.id); setAssets(created.sort((a, b) => a.sequence - b.sequence)); setActiveAsset(0); notify(`${created.length} content image${created.length === 1 ? "" : "s"} generated.`); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t generate content."); } finally { setBusy(""); } };
   const send = async () => { setBusy("sheet"); try { await sendForGeneration(story.id, values); notify("Article sent to the Google Sheet for generation."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet."); } finally { setBusy(""); } };
-  const regenerateAsset = async () => { const current = assets[activeAsset]; if (!current) return; setBusy("asset"); try { const [replacement] = await generateAssets(story.id, assetChange, current.sequence); if (!replacement) throw new Error("No replacement image was returned."); setAssets((old) => old.map((asset) => asset.sequence === replacement.sequence ? replacement : asset)); setAssetChange(""); notify(`Panel ${current.sequence} regenerated.`); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t regenerate this panel."); } finally { setBusy(""); } };
-  const currentAsset = assets[activeAsset];
   return (
     <section>
       <div className="detail-top">
@@ -754,30 +635,22 @@ function Detail({
         </div>
       </div>
       <h1>Article detail</h1>
-      <p className="article-detail-summary">{values.summary || "No article summary has been saved yet."}</p>
       <div className="detail-grid">
         <div className="left-fields">
           <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
+          <p className="article-detail-summary">{values.summary || "No article summary has been saved yet."}</p>
           <Field label="URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
           <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
           <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Five-panel Instagram carousel</option><option value="single_image">Single image</option><option value="multi_pane_cartoon">Multi-pane cartoon</option><option value="reel">Reel</option></select></Field>
           <Field label="Panels"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
-          <Field label="Setting"><textarea style={{ minHeight: 95 }} value={values.setting} onChange={(e) => update("setting", e.target.value)} /></Field>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
           <Field label="Recommended hashtags · 3–5"><textarea style={{ minHeight: 100 }} value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field>
         </div>
         <div className="right-fields">
           <Field label="Content"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
-          <button className="button primary wide" onClick={prompt} disabled={Boolean(busy)}><FiFileText /> {busy === "prompt" ? "Generating prompt…" : values.prompt ? "Regenerate Prompt" : "Generate Prompt"}</button>
-          <button className="button wide" style={{ marginTop: 12 }} onClick={() => void send()} disabled={Boolean(busy)}><FiExternalLink /> {busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
+          <button className="button primary wide" onClick={() => void send()} disabled={Boolean(busy)}><FiExternalLink /> {busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
         </div>
       </div>
-      {values.prompt && <div style={{ marginTop: 28 }}><Field label="Full production prompt"><textarea className="tall" style={{ minHeight: 420, lineHeight: 1.65 }} value={values.prompt} onChange={(e) => update("prompt", e.target.value)} /></Field><button className="button primary wide" style={{ marginTop: 18 }} onClick={() => void generateContent()} disabled={Boolean(busy)}><FiImage /> {busy === "content" ? "Generating content…" : "Generate Content"}</button></div>}
-      <section id="generated-content" className="detail-generated-content">
-        <h2>Content</h2>
-        <p>Generated carousel images for this article.</p>
-        {currentAsset ? <><div className="detail-asset-stage"><img src={currentAsset.url} alt={`Generated carousel panel ${currentAsset.sequence}`} />{assets.length > 1 && <><button aria-label="Previous image" className="asset-arrow previous" onClick={() => setActiveAsset((index) => (index - 1 + assets.length) % assets.length)}><FiArrowLeft /></button><button aria-label="Next image" className="asset-arrow next" onClick={() => setActiveAsset((index) => (index + 1) % assets.length)}><FiArrowRight /></button></>}</div><div className="detail-asset-thumbnails">{assets.map((asset, index) => <button key={asset.id} aria-label={`Show panel ${asset.sequence}`} className={index === activeAsset ? "active" : ""} onClick={() => setActiveAsset(index)}><img src={asset.url} alt="" /></button>)}</div><div className="generated-post-copy"><b>Post text</b><p>{values.caption || "No post text has been generated yet."}</p><b>Suggested hashtags</b><div className="hashtags">{normalizeHashtags(values.hashtags).map((tag) => <span key={tag}>{tag}</span>)}</div></div><Field label={`Regenerate panel ${currentAsset.sequence}`}><textarea value={assetChange} onChange={(event) => setAssetChange(event.target.value)} placeholder="What would you like to change?" /></Field><button className="button wide" onClick={() => void regenerateAsset()} disabled={Boolean(busy)}><FiRefreshCw /> {busy === "asset" ? "Regenerating…" : "Regenerate image"}</button></> : <p className="detail-content-empty">Generate the content after creating its full production prompt. Images will appear here.</p>}
-      </section>
     </section>
   );
 }
@@ -800,7 +673,9 @@ function formatPanelContent(value: string) {
 }
 function detailValues(story: Story, concept: Concept | null): DetailValues {
   const image = concept?.image_summary ?? {};
-  const content = formatPanelContent(image.content ?? concept?.detailed_prompt ?? "");
+  const panelContent = formatPanelContent(image.content ?? concept?.detailed_prompt ?? "");
+  const settingLine = image.setting ? `Setting: ${image.setting}` : "";
+  const content = /^\s*Setting\s*:/i.test(panelContent) ? panelContent : [settingLine, panelContent].filter(Boolean).join("\n\n");
   return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" "), summary: concept?.summary ?? story.overview ?? "" };
 }
 function Field({
@@ -817,6 +692,7 @@ function Field({
     </label>
   );
 }
+/* Retired in-app OpenAI asset generation and preview. Assets are generated through Google Sheets.
 function Produce({
   story,
   productionRequest,
@@ -1067,6 +943,8 @@ function Preview({
     </section>
   );
 }
+*/
+
 function Archive({
   items,
   restore,
