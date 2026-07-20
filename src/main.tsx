@@ -653,14 +653,14 @@ function Detail({
           <button onClick={save} disabled={Boolean(busy)}><FiCheck /> {busy === "save" ? "Saving…" : "Save changes"}</button>
         </div>
       </div>
-      <h1>Article detail</h1>
+      <h1>{values.title || "Untitled article"}</h1>
       <div className="detail-grid">
         <div className="left-fields">
           <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
-          <Field label="Article Summary"><textarea value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder="A two-to-three sentence article summary" /></Field>
+          <Field label="Article Summary"><textarea style={{ minHeight: 210 }} value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder="A two-to-three sentence article summary" /></Field>
           <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
           <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
-          <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Five-panel Instagram carousel</option><option value="single_image">Single image</option><option value="multi_pane_cartoon">Multi-pane cartoon</option><option value="reel">Reel</option></select></Field>
+          <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Carousel</option><option value="single_image">Single Image</option><option value="multi_pane_cartoon">Multi-pane Cartoon</option><option value="reel">Reel</option></select></Field>
           <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
           <Field label="Recommended hashtags · 3–5"><textarea style={{ minHeight: 100 }} value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field>
