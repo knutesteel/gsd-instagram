@@ -667,7 +667,7 @@ function Detail({
         </div>
         <div className="right-fields">
           <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
-          <button className="button primary wide" onClick={() => void send()} disabled={Boolean(busy)}><FiExternalLink /> {busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
+          <button className={story.status === "Sent to Sheets" ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || story.status === "Sent to Sheets"}><FiExternalLink /> {story.status === "Sent to Sheets" ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
         </div>
       </div>
     </section>
