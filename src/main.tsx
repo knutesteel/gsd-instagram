@@ -39,7 +39,7 @@ type Story = {
   type: string;
   status: "New" | "Sent to Sheets" | "Generated" | "Approved to Post" | "Archived";
 };
-type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, string>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
+type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -124,6 +124,13 @@ function App() {
     await updateStatus(articleId, "sent_to_sheets");
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, status: "Sent to Sheets" } : item));
     return result as { updatedRange?: string };
+  };
+  const syncGeneratedContent = async () => {
+    if (!supabase) return;
+    const { data } = await supabase.auth.getSession(); if (!data.session) return;
+    const response = await fetch("/api/sync-sheet-generation", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}` } });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Couldn’t sync generated content.");
+    const ids: string[] = result.updatedArticleIds ?? []; if (ids.length) { setItems((old) => old.map((item) => ids.includes(item.id) ? { ...item, status: "Generated" } : item)); if (selected && ids.includes(selected)) await loadConcept(selected); }
   };
   const navigate = (next: number) => {
     const index = items.findIndex((i) => i.id === selected);
@@ -218,6 +225,7 @@ function App() {
             next={() => navigate(1)}
             discard={() => discard(active.id)}
             sendForGeneration={sendForGeneration}
+            syncGeneratedContent={syncGeneratedContent}
           />
         )}
         {screen === "archive" && (
@@ -618,6 +626,7 @@ function Detail({
   saveDetail,
   reanalyze,
   sendForGeneration,
+  syncGeneratedContent,
   notify,
 }: {
   story: Story;
@@ -628,11 +637,13 @@ function Detail({
   saveDetail: (id: string, values: DetailValues) => Promise<void>;
   reanalyze: () => Promise<unknown>;
   sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
+  syncGeneratedContent: () => Promise<void>;
   notify: (message: string) => void;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
   const [busy, setBusy] = useState("");
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
+  useEffect(() => { void syncGeneratedContent(); }, [story.id]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
@@ -676,6 +687,7 @@ function Detail({
           <button className={story.status === "Sent to Sheets" ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || story.status === "Sent to Sheets"}><FiExternalLink /> {story.status === "Sent to Sheets" ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
         </div>
       </div>
+      {Array.isArray(concept?.image_summary?.sheet_images) && concept.image_summary.sheet_images.length > 0 && <section className="detail-generated-content"><h2>Content</h2><p>Generated images from Google Sheets.</p><div className="detail-asset-thumbnails">{concept.image_summary.sheet_images.map((url: string, index: number) => <a key={url} href={url} target="_blank" rel="noreferrer"><img src={url} alt={`Generated panel ${index + 1}`} /></a>)}</div></section>}
     </section>
   );
 }

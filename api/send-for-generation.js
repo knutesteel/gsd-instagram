@@ -33,7 +33,7 @@ const typeLabel = (postType) => {
 
 async function latestColumnJFormulaRow(accessToken) {
   const headers = { Authorization: `Bearer ${accessToken}` };
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!J:J")}?valueRenderOption=FORMULA`, { headers });
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!K:K")}?valueRenderOption=FORMULA`, { headers });
   if (!response.ok) throw new Error("Couldn’t read the previous Column J formula in Google Sheets.");
   const values = (await response.json()).values ?? [];
   return values.length > 1 ? values.length : null;
@@ -45,8 +45,8 @@ async function copyColumnJFormula(accessToken, sourceRow, destinationRow) {
     method: "POST",
     headers: { ...json, Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ requests: [{ copyPaste: {
-      source: { sheetId: 0, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 9, endColumnIndex: 10 },
-      destination: { sheetId: 0, startRowIndex: destinationRow - 1, endRowIndex: destinationRow, startColumnIndex: 9, endColumnIndex: 10 },
+      source: { sheetId: 0, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 10, endColumnIndex: 11 },
+      destination: { sheetId: 0, startRowIndex: destinationRow - 1, endRowIndex: destinationRow, startColumnIndex: 10, endColumnIndex: 11 },
       pasteType: "PASTE_NORMAL",
       pasteOrientation: "NORMAL",
     } }] }),
@@ -67,12 +67,12 @@ export default async function handler(req, res) {
   const articleId = req.body?.articleId;
   if (!articleId) return res.status(400).json({ error: "Article is required." });
 
-  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,caption)`, { headers: auth });
+  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,generation_identifier,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,caption)`, { headers: auth });
   if (!articleResponse.ok) return res.status(502).json({ error: "Couldn’t load the article for generation." });
   const article = (await articleResponse.json())[0];
   if (!article) return res.status(404).json({ error: "Article not found." });
   const concept = Array.isArray(article.post_concepts) ? article.post_concepts[0] : article.post_concepts;
-  if (!concept?.summary || !concept?.image_summary?.content) return res.status(422).json({ error: "Add an article summary and suggested content before sending this item." });
+  if (!article.generation_identifier || !concept?.summary || !concept?.image_summary?.content) return res.status(422).json({ error: "Add an article summary and suggested content before sending this item." });
 
   try {
     const accessToken = await googleAccessToken();
@@ -82,6 +82,7 @@ export default async function handler(req, res) {
       new Date().toISOString().slice(0, 10),
       "New",
       article.title,
+      article.generation_identifier,
       article.source_url || article.canonical_url || "",
       concept.summary,
       concept.panel_count || 1,
@@ -89,7 +90,7 @@ export default async function handler(req, res) {
       content,
       concept.caption || "",
     ]];
-    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:I")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:J")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method: "POST",
       headers: { ...json, Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ values }),
