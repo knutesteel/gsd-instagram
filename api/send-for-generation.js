@@ -54,6 +54,20 @@ async function copyColumnJFormula(accessToken, sourceRow, destinationRow) {
   if (!response.ok) throw new Error("Couldn’t copy the Column J generation formula.");
 }
 
+async function formatAddedRow(accessToken, rowNumber) {
+  if (!rowNumber) return;
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    headers: { ...json, Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ requests: [{ repeatCell: {
+      range: { sheetId: 0, startRowIndex: rowNumber - 1, endRowIndex: rowNumber, startColumnIndex: 0, endColumnIndex: 10 },
+      cell: { userEnteredFormat: { verticalAlignment: "TOP", wrapStrategy: "WRAP" } },
+      fields: "userEnteredFormat(verticalAlignment,wrapStrategy)",
+    } }] }),
+  });
+  if (!response.ok) throw new Error("Couldn’t format the new Google Sheets row.");
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -99,6 +113,7 @@ export default async function handler(req, res) {
     const result = await response.json();
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
     await copyColumnJFormula(accessToken, sourceFormulaRow, destinationRow);
+    await formatAddedRow(accessToken, destinationRow);
     return res.status(200).json({ updatedRange: result.updates?.updatedRange });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t add the row to Google Sheets." });
