@@ -30,7 +30,7 @@ Deployment trigger
 Verified stylesheet deployment
 # Send articles to Google Sheets
 
-The Article detail **Send for Generation** button appends a row to the configured Google Sheet with `Created`, `Status`, `Article Title`, `Source URL`, `Article Summary`, `Format`, and `Content (Suggested Prompt)`.
+The Article detail **Send for Generation** button appends a row to the configured Google Sheet with `Created`, `Status`, `Article Title`, `Source URL`, `Article Summary`, `Panel Count`, `Type`, `Content (Suggested Prompt)`, and `Caption`.
 
 In Vercel, add these Production environment variables:
 

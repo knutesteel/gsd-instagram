@@ -1,6 +1,12 @@
 .story-head,
 .story-row {
-  grid-template-columns: 3.2fr 1.45fr 0.65fr 1fr 0.9fr 0.9fr 1.25fr;
+  grid-template-columns: 3fr 1.05fr 1.3fr 0.65fr 1fr 0.9fr 1.25fr;
+}
+
+.date-added {
+  color: #625f57;
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .story-title-link {

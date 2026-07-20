@@ -26,9 +26,9 @@ async function googleAccessToken() {
   return (await response.json()).access_token;
 }
 
-const formatLabel = (postType, panelCount) => {
+const typeLabel = (postType) => {
   const names = { carousel: "Instagram carousel", single_image: "single image", multi_pane_cartoon: "multi-pane cartoon", reel: "reel" };
-  return `${panelCount || 1}-panel ${names[postType] || postType || "Instagram carousel"}`;
+  return names[postType] || postType || "Instagram carousel";
 };
 
 export default async function handler(req, res) {
@@ -44,7 +44,7 @@ export default async function handler(req, res) {
   const articleId = req.body?.articleId;
   if (!articleId) return res.status(400).json({ error: "Article is required." });
 
-  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary)`, { headers: auth });
+  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,caption)`, { headers: auth });
   if (!articleResponse.ok) return res.status(502).json({ error: "Couldn’t load the article for generation." });
   const article = (await articleResponse.json())[0];
   if (!article) return res.status(404).json({ error: "Article not found." });
@@ -60,10 +60,12 @@ export default async function handler(req, res) {
       article.title,
       article.source_url || article.canonical_url || "",
       concept.summary,
-      formatLabel(concept.post_type, concept.panel_count),
+      concept.panel_count || 1,
+      typeLabel(concept.post_type),
       content,
+      concept.caption || "",
     ]];
-    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:G")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:I")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method: "POST",
       headers: { ...json, Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ values }),

@@ -87,7 +87,7 @@ function App() {
   const updateStatus = async (id: string, status: "discarded" | "new" | "sent_to_sheets" | "generated" | "approved_to_post") => {
     if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
-    if (error) notify(`Couldn’t save change: ${error.message}`);
+    if (error) throw new Error(`Couldn’t save change: ${error.message}`);
   };
   const discard = (id: string) => {
     setItems((old) =>
@@ -99,12 +99,12 @@ function App() {
     );
     setScreen("dashboard");
   };
-  const saveDetail = async (articleId: string, values: { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; caption: string; prompt: string; hashtags: string }) => {
+  const saveDetail = async (articleId: string, values: { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; caption: string; prompt: string; hashtags: string; summary: string }) => {
     if (!supabase) return;
     const articleUpdate = await supabase.from("articles").update({ title: values.title, source_url: values.url, canonical_url: values.url, rank: values.score }).eq("id", articleId);
     if (articleUpdate.error) throw new Error(articleUpdate.error.message);
     const hashtags = normalizeHashtags(values.hashtags);
-    const conceptUpdate = await supabase.from("post_concepts").update({ post_type: values.postType, panel_count: values.panelCount, image_summary: { setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption, hashtags }).eq("article_id", articleId);
+    const conceptUpdate = await supabase.from("post_concepts").update({ summary: values.summary, post_type: values.postType, panel_count: values.panelCount, image_summary: { setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption, hashtags }).eq("article_id", articleId);
     if (conceptUpdate.error) throw new Error(conceptUpdate.error.message);
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, score: values.score, type: values.postType } : item));
     await loadConcept(articleId);
@@ -121,8 +121,8 @@ function App() {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Couldn’t send this article to the generation sheet.");
-    setItems((old) => old.map((item) => item.id === articleId ? { ...item, status: "Sent to Sheets" } : item));
     await updateStatus(articleId, "sent_to_sheets");
+    setItems((old) => old.map((item) => item.id === articleId ? { ...item, status: "Sent to Sheets" } : item));
     return result as { updatedRange?: string };
   };
   const navigate = (next: number) => {
@@ -657,16 +657,16 @@ function Detail({
       <div className="detail-grid">
         <div className="left-fields">
           <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
-          <p className="article-detail-summary">{values.summary || "No article summary has been saved yet."}</p>
-          <Field label="URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
+          <Field label="Article Summary"><textarea value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder="A two-to-three sentence article summary" /></Field>
+          <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
           <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
           <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Five-panel Instagram carousel</option><option value="single_image">Single image</option><option value="multi_pane_cartoon">Multi-pane cartoon</option><option value="reel">Reel</option></select></Field>
-          <Field label="Panels"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
+          <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
           <Field label="Recommended hashtags · 3–5"><textarea style={{ minHeight: 100 }} value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field>
         </div>
         <div className="right-fields">
-          <Field label="Content"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
+          <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
           <button className="button primary wide" onClick={() => void send()} disabled={Boolean(busy)}><FiExternalLink /> {busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
         </div>
       </div>
