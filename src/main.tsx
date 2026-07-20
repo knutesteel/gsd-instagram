@@ -390,14 +390,15 @@ function Dashboard({
     });
   const categories = [...new Set(items.map((item) => item.category))];
   const types = [...new Set(items.map((item) => item.type))];
+  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved to Post", "Archived"];
   const groupedStories = Array.from(
     shown.reduce((groups, item) => {
-      const stories = groups.get(item.category) ?? [];
+      const stories = groups.get(item.status) ?? [];
       stories.push(item);
-      groups.set(item.category, stories);
+      groups.set(item.status, stories);
       return groups;
-    }, new Map<string, Story[]>()),
-  ).sort(([firstCategory], [secondCategory]) => firstCategory.localeCompare(secondCategory));
+    }, new Map<Story["status"], Story[]>()),
+  ).sort(([firstStatus], [secondStatus]) => statusOrder.indexOf(firstStatus) - statusOrder.indexOf(secondStatus));
   return (
     <section>
       <header className="page-header">
