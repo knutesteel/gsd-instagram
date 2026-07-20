@@ -106,7 +106,7 @@ function App() {
     const articleUpdate = await supabase.from("articles").update({ title: values.title, source_url: values.url, canonical_url: values.url, rank: values.score }).eq("id", articleId);
     if (articleUpdate.error) throw new Error(articleUpdate.error.message);
     const hashtags = normalizeHashtags(values.hashtags);
-    const conceptUpdate = await supabase.from("post_concepts").update({ summary: values.summary, post_type: values.postType, panel_count: values.panelCount, image_summary: { setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption, hashtags }).eq("article_id", articleId);
+    const conceptUpdate = await supabase.from("post_concepts").update({ summary: values.summary, post_type: values.postType, panel_count: values.panelCount, image_summary: { ...(concept?.image_summary ?? {}), setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption, hashtags }).eq("article_id", articleId);
     if (conceptUpdate.error) throw new Error(conceptUpdate.error.message);
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, score: values.score, type: values.postType } : item));
     await loadConcept(articleId);
@@ -647,7 +647,10 @@ function Detail({
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
   const [busy, setBusy] = useState("");
+  const [activeImage, setActiveImage] = useState(0);
+  const images = Array.isArray(concept?.image_summary?.sheet_images) ? concept.image_summary.sheet_images.filter(Boolean) as string[] : [];
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
+  useEffect(() => setActiveImage(0), [story.id, images.length]);
   useEffect(() => { void syncGeneratedContent(); }, [story.id]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
@@ -676,23 +679,39 @@ function Detail({
         </div>
       </div>
       <h1>{values.title || "Untitled article"}</h1>
-      <div className="detail-grid">
-        <div className="left-fields">
+      <div className="detail-fields">
+        <div className="left-fields detail-editor-fields">
           <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
-          <Field label="Article Summary"><textarea style={{ minHeight: 210 }} value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder="A two-to-three sentence article summary" /></Field>
+          <Field label="Article Summary"><textarea className="summary-editor" value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder="A two-to-three sentence article summary" /></Field>
           <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
-          <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
           <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Carousel</option><option value="single_image">Single Image</option><option value="multi_pane_cartoon">Multi-pane Cartoon</option><option value="reel">Reel</option></select></Field>
-          <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
+          <div className="detail-number-row">
+            <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
+            <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
+          </div>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
-          <Field label="Recommended hashtags · 3–5"><textarea style={{ minHeight: 100 }} value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field>
-        </div>
-        <div className="right-fields">
-          <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
-          <button className={story.status === "Sent to Sheets" ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || story.status === "Sent to Sheets"}><FiExternalLink /> {story.status === "Sent to Sheets" ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
+          <Field label="Recommended hashtags · 3–5"><textarea className="hashtags-editor" value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field>
         </div>
       </div>
-      {Array.isArray(concept?.image_summary?.sheet_images) && concept.image_summary.sheet_images.length > 0 && <section className="detail-generated-content"><h2>Content</h2><p>Generated images from Google Sheets.</p><div className="detail-asset-thumbnails">{concept.image_summary.sheet_images.map((url: string, index: number) => <a key={url} href={url} target="_blank" rel="noreferrer"><img src={url} alt={`Generated panel ${index + 1}`} /></a>)}</div></section>}
+      <section className="detail-content-section">
+        <div className="detail-content-heading"><h2>Content</h2><span /></div>
+        {images.length > 0 ? <div className="detail-generated-content">
+          <div className="detail-asset-gallery">
+            <div className="detail-asset-stage">
+              <img src={images[activeImage]} alt={`Generated panel ${activeImage + 1}`} />
+              {images.length > 1 && <>
+                <button className="asset-arrow previous" aria-label="Previous image" onClick={() => setActiveImage((index) => (index - 1 + images.length) % images.length)}><FiArrowLeft /></button>
+                <button className="asset-arrow next" aria-label="Next image" onClick={() => setActiveImage((index) => (index + 1) % images.length)}><FiArrowRight /></button>
+              </>}
+            </div>
+            {images.length > 1 && <div className="detail-asset-thumbnails">{images.map((url, index) => <button key={url} className={index === activeImage ? "active" : ""} aria-label={`Show panel ${index + 1}`} onClick={() => setActiveImage(index)}><img src={url} alt={`Panel ${index + 1}`} /></button>)}</div>}
+          </div>
+          <div className="generated-post-copy"><b>Post Comment</b><p>{values.caption || "No post comment provided."}</p><b>Hashtags</b><p>{values.hashtags || "No hashtags provided."}</p></div>
+        </div> : <>
+          <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
+          <button className={story.status === "Sent to Sheets" ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || story.status === "Sent to Sheets"}><FiExternalLink /> {story.status === "Sent to Sheets" ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
+        </>}
+      </section>
     </section>
   );
 }
