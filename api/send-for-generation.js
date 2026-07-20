@@ -27,21 +27,31 @@ async function googleAccessToken() {
 }
 
 const typeLabel = (postType) => {
-  const names = { carousel: "Instagram carousel", single_image: "single image", multi_pane_cartoon: "multi-pane cartoon", reel: "reel" };
-  return names[postType] || postType || "Instagram carousel";
+  const names = { carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" };
+  return names[postType] || postType || "Carousel";
 };
 
-async function previousRowColumnJ(accessToken) {
+async function latestColumnJFormulaRow(accessToken) {
   const headers = { Authorization: `Bearer ${accessToken}` };
-  const columnAResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:A")}`, { headers });
-  if (!columnAResponse.ok) throw new Error("Couldn’t read the previous row in Google Sheets.");
-  const previousRow = ((await columnAResponse.json()).values ?? []).length;
-  if (previousRow <= 1) return "";
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!J:J")}?valueRenderOption=FORMULA`, { headers });
+  if (!response.ok) throw new Error("Couldn’t read the previous Column J formula in Google Sheets.");
+  const values = (await response.json()).values ?? [];
+  return values.length > 1 ? values.length : null;
+}
 
-  const columnJResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!J${previousRow}`)}`, { headers });
-  if (!columnJResponse.ok) throw new Error("Couldn’t read column J from the previous Google Sheets row.");
-  const columnJ = (await columnJResponse.json()).values ?? [];
-  return columnJ[0]?.[0] ?? "";
+async function copyColumnJFormula(accessToken, sourceRow, destinationRow) {
+  if (!sourceRow || !destinationRow) return;
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    headers: { ...json, Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ requests: [{ copyPaste: {
+      source: { sheetId: 0, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 9, endColumnIndex: 10 },
+      destination: { sheetId: 0, startRowIndex: destinationRow - 1, endRowIndex: destinationRow, startColumnIndex: 9, endColumnIndex: 10 },
+      pasteType: "PASTE_NORMAL",
+      pasteOrientation: "NORMAL",
+    } }] }),
+  });
+  if (!response.ok) throw new Error("Couldn’t copy the Column J generation formula.");
 }
 
 export default async function handler(req, res) {
@@ -67,7 +77,7 @@ export default async function handler(req, res) {
   try {
     const accessToken = await googleAccessToken();
     const content = concept.image_summary.content;
-    const copiedColumnJValue = await previousRowColumnJ(accessToken);
+    const sourceFormulaRow = await latestColumnJFormulaRow(accessToken);
     const values = [[
       new Date().toISOString().slice(0, 10),
       "New",
@@ -78,15 +88,16 @@ export default async function handler(req, res) {
       typeLabel(concept.post_type),
       content,
       concept.caption || "",
-      copiedColumnJValue,
     ]];
-    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:J")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:I")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method: "POST",
       headers: { ...json, Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ values }),
     });
     if (!response.ok) throw new Error("Couldn’t add the row to Google Sheets.");
     const result = await response.json();
+    const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
+    await copyColumnJFormula(accessToken, sourceFormulaRow, destinationRow);
     return res.status(200).json({ updatedRange: result.updates?.updatedRange });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t add the row to Google Sheets." });

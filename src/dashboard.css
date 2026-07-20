@@ -9,6 +9,32 @@
   line-height: 1.35;
 }
 
+.category-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 25px 11px;
+  border-bottom: 1px solid #e9e5dd;
+  background: #f6f4ed;
+  color: #4f5d3d;
+}
+
+.category-group-heading:not(:first-of-type) {
+  border-top: 1px solid #ded8ca;
+}
+
+.category-group-heading b {
+  font-size: 13px;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+}
+
+.category-group-heading span {
+  color: #777168;
+  font-size: 12px;
+}
+
 .story-title-link {
   padding: 0;
   color: inherit;

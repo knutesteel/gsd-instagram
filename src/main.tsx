@@ -382,6 +382,14 @@ function Dashboard({
     });
   const categories = [...new Set(items.map((item) => item.category))];
   const types = [...new Set(items.map((item) => item.type))];
+  const groupedStories = Array.from(
+    shown.reduce((groups, item) => {
+      const stories = groups.get(item.category) ?? [];
+      stories.push(item);
+      groups.set(item.category, stories);
+      return groups;
+    }, new Map<string, Story[]>()),
+  ).sort(([firstCategory], [secondCategory]) => firstCategory.localeCompare(secondCategory));
   return (
     <section>
       <header className="page-header">
@@ -423,27 +431,25 @@ function Dashboard({
           <span>Actions</span>
         </div>
         {shown.length === 0 && <div className="empty-queue"><FiCompass /><h2>No stories in your queue yet</h2><p>Use Discover to find fresh, high-fit stories. Your discarded items remain protected from duplicates.</p><button className="button primary" onClick={discover}>Find fresh stories</button></div>}
-        {shown.map((item) => (
-          <div className="story-row" key={item.id}>
-            <div>
-              <h3><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
-              <p>{item.overview}</p>
+        {groupedStories.map(([categoryName, stories]) => <React.Fragment key={categoryName}>
+          <div className="category-group-heading"><b>{categoryName}</b><span>{stories.length} {stories.length === 1 ? "story" : "stories"}</span></div>
+          {stories.map((item) => (
+            <div className="story-row" key={item.id}>
+              <div>
+                <h3><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
+                <p>{item.overview}</p>
+              </div>
+              <time className="date-added" dateTime={item.createdAt ?? undefined}>{formatAddedDate(item.createdAt)}</time>
+              <span className="chip">{item.category}</span>
+              <span className="score">{item.score}</span>
+              <span className="type">{item.type}</span>
+              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved to Post</option></select>
+              <div className="actions">
+                <button className="text-danger" onClick={() => onDiscard(item.id)}>Discard</button>
+              </div>
             </div>
-            <time className="date-added" dateTime={item.createdAt ?? undefined}>{formatAddedDate(item.createdAt)}</time>
-            <span className="chip">{item.category}</span>
-            <span className="score">{item.score}</span>
-            <span className="type">{item.type}</span>
-            <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved to Post</option></select>
-            <div className="actions">
-              <button
-                className="text-danger"
-                onClick={() => onDiscard(item.id)}
-              >
-                Discard
-              </button>
-            </div>
-          </div>
-        ))}
+          ))}
+        </React.Fragment>)}
       </div>
     </section>
   );
