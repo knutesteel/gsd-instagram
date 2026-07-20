@@ -33,27 +33,19 @@ const typeLabel = (postType) => {
 const createIdentifier = () => Array.from({ length: 6 }, () => "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(Math.random() * 26)]).join("");
 const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nPanel 1 must directly introduce the article and show Hank reading a physical newspaper whose visible front-page headline is exactly: “${title}”. The squirrel responds to the headline. For Panels 2 onward, let Hank and the squirrel have a natural, funny conversation inspired by the article’s theme or humane takeaway. Do not mechanically restate the article or force its setting and props into every later panel; a natural setting change and conversational tangent are welcome. Keep both characters present and speaking in every panel, with the last panel landing a warm, practical thought. Use the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
 
-async function latestColumnJFormulaRow(accessToken) {
-  const headers = { Authorization: `Bearer ${accessToken}` };
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!K:K")}?valueRenderOption=FORMULA`, { headers });
-  if (!response.ok) throw new Error("Couldn’t read the previous Column J formula in Google Sheets.");
-  const values = (await response.json()).values ?? [];
-  return values.length > 1 ? values.length : null;
-}
-
-async function copyColumnJFormula(accessToken, sourceRow, destinationRow) {
-  if (!sourceRow || !destinationRow) return;
+async function copyPromptFromPreviousRow(accessToken, destinationRow) {
+  if (!destinationRow || destinationRow <= 2) return;
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
     method: "POST",
     headers: { ...json, Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ requests: [{ copyPaste: {
-      source: { sheetId: 0, startRowIndex: sourceRow - 1, endRowIndex: sourceRow, startColumnIndex: 10, endColumnIndex: 11 },
-      destination: { sheetId: 0, startRowIndex: destinationRow - 1, endRowIndex: destinationRow, startColumnIndex: 10, endColumnIndex: 11 },
+      source: { sheetId: 0, startRowIndex: destinationRow - 2, endRowIndex: destinationRow - 1, startColumnIndex: 9, endColumnIndex: 10 },
+      destination: { sheetId: 0, startRowIndex: destinationRow - 1, endRowIndex: destinationRow, startColumnIndex: 9, endColumnIndex: 10 },
       pasteType: "PASTE_NORMAL",
       pasteOrientation: "NORMAL",
     } }] }),
   });
-  if (!response.ok) throw new Error("Couldn’t copy the Column J generation formula.");
+  if (!response.ok) throw new Error("Couldn’t copy the Prompt from the previous Google Sheets row.");
 }
 
 async function formatAddedRow(accessToken, rowNumber) {
@@ -96,7 +88,6 @@ export default async function handler(req, res) {
     const identifier = article.generation_identifier || createIdentifier();
     const url = article.source_url || article.canonical_url || "";
     const type = typeLabel(concept.post_type);
-    const prompt = concept.detailed_prompt || generationPrompt({ title: article.title, url, panelCount: concept.panel_count, type, content });
     const values = [[
       new Date().toISOString().slice(0, 10),
       "Pending",
@@ -107,7 +98,7 @@ export default async function handler(req, res) {
       concept.panel_count || 1,
       type,
       content,
-      prompt,
+      "",
       concept.caption || "",
       Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
     ]];
@@ -119,6 +110,7 @@ export default async function handler(req, res) {
     if (!response.ok) throw new Error("Couldn’t add the row to Google Sheets.");
     const result = await response.json();
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
+    await copyPromptFromPreviousRow(accessToken, destinationRow);
     await formatAddedRow(accessToken, destinationRow);
     const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
