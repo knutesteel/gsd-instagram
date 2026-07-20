@@ -37,7 +37,7 @@ type Story = {
   score: number;
   url?: string;
   type: string;
-  status: "New" | "Sent to Sheets" | "Generated" | "Approved to Post" | "Archived";
+  status: "New" | "Sent to Sheets" | "Generated" | "Approved" | "Archived";
   generationIdentifier?: string | null;
   generationSheetRow?: number | null;
 };
@@ -80,7 +80,7 @@ function App() {
     if (!supabase || !userId) return;
     supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("created_at", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved to Post" : "New") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
@@ -132,7 +132,16 @@ function App() {
     const { data } = await supabase.auth.getSession(); if (!data.session) return;
     const response = await fetch("/api/sync-sheet-generation", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}` } });
     const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Couldn’t sync generated content.");
-    const ids: string[] = result.updatedArticleIds ?? []; if (ids.length) { setItems((old) => old.map((item) => ids.includes(item.id) ? { ...item, status: "Generated" } : item)); if (selected && ids.includes(selected)) await loadConcept(selected); }
+    const ids: string[] = result.updatedArticleIds ?? [];
+    const statuses: Record<string, Story["status"]> = result.statuses ?? {};
+    if (ids.length) { setItems((old) => old.map((item) => statuses[item.id] ? { ...item, status: statuses[item.id] } : item)); if (selected && ids.includes(selected)) await loadConcept(selected); }
+  };
+  const approveGeneratedContent = async (articleId: string) => {
+    if (!supabase) return;
+    const { data } = await supabase.auth.getSession(); if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/approve-generation", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify({ articleId }) });
+    const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Couldn’t approve this post.");
+    setItems((old) => old.map((item) => item.id === articleId ? { ...item, status: "Approved" } : item));
   };
   const navigate = (next: number) => {
     const index = items.findIndex((i) => i.id === selected);
@@ -146,7 +155,7 @@ function App() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
     await supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("created_at", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved to Post" : "New") as Story["status"] }));
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -204,7 +213,8 @@ function App() {
               setScreen("detail");
             }}
             onDiscard={discard}
-            onStatus={(id, status) => { setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item)); void updateStatus(id, status === "Sent to Sheets" ? "sent_to_sheets" : status === "Generated" ? "generated" : status === "Approved to Post" ? "approved_to_post" : "new"); }}
+            onStatus={(id, status) => { if (status === "Approved") { void approveGeneratedContent(id).then(() => notify("Post approved in the app and Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t approve this post.")); return; } setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item)); void updateStatus(id, status === "Sent to Sheets" ? "sent_to_sheets" : status === "Generated" ? "generated" : "new"); }}
+            approve={(id) => void approveGeneratedContent(id).then(() => notify("Post approved in the app and Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t approve this post."))}
           />
         )}
         {screen === "discover" && (
@@ -228,6 +238,7 @@ function App() {
             discard={() => discard(active.id)}
             sendForGeneration={sendForGeneration}
             syncGeneratedContent={syncGeneratedContent}
+            approveGeneratedContent={approveGeneratedContent}
           />
         )}
         {screen === "archive" && (
@@ -371,12 +382,14 @@ function Dashboard({
   select,
   onDiscard,
   onStatus,
+  approve,
 }: {
   items: Story[];
   discover: () => void;
   select: (id: string) => void;
   onDiscard: (id: string) => void;
   onStatus: (id: string, status: Exclude<Story["status"], "Archived">) => void;
+  approve: (id: string) => void;
 }) {
   const [filter, setFilter] = useState("");
   const [category, setCategory] = useState("all");
@@ -392,7 +405,7 @@ function Dashboard({
     });
   const categories = [...new Set(items.map((item) => item.category))];
   const types = [...new Set(items.map((item) => item.type))];
-  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved to Post", "Archived"];
+  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Archived"];
   const groupedStories = Array.from(
     shown.reduce((groups, item) => {
       const stories = groups.get(item.status) ?? [];
@@ -451,13 +464,14 @@ function Dashboard({
                 <h3><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
                 <p>{item.overview}</p>
               </div>
-              {item.generationIdentifier && item.generationSheetRow ? <a className="identifier-link" href={`https://docs.google.com/spreadsheets/d/1gRQGMBFRRMxW2WZL-ZVGxJNQrCbG2PFpRXukD-1_Xyo/edit#gid=0&range=D${item.generationSheetRow}`} target="_blank" rel="noreferrer">{item.generationIdentifier}</a> : <span className="identifier-empty">—</span>}
+              {item.generationIdentifier && item.generationSheetRow ? <a className="identifier-link" href={`https://docs.google.com/spreadsheets/d/1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ/edit#gid=0&range=D${item.generationSheetRow}`} target="_blank" rel="noreferrer">{item.generationIdentifier}</a> : <span className="identifier-empty">—</span>}
               <time className="date-added" dateTime={item.createdAt ?? undefined}>{formatAddedDate(item.createdAt)}</time>
               <span className="chip">{item.category}</span>
               <span className="score">{item.score}</span>
               <span className="type">{item.type}</span>
-              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved to Post</option></select>
+              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option></select>
               <div className="actions">
+                {item.status === "Generated" && <button className="button compact primary" onClick={() => approve(item.id)}><FiCheck /> Approve</button>}
                 <button className="text-danger" onClick={() => onDiscard(item.id)}>Discard</button>
               </div>
             </div>
@@ -632,6 +646,7 @@ function Detail({
   reanalyze,
   sendForGeneration,
   syncGeneratedContent,
+  approveGeneratedContent,
   notify,
 }: {
   story: Story;
@@ -643,6 +658,7 @@ function Detail({
   reanalyze: () => Promise<unknown>;
   sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
   syncGeneratedContent: () => Promise<void>;
+  approveGeneratedContent: (articleId: string) => Promise<void>;
   notify: (message: string) => void;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
@@ -656,6 +672,8 @@ function Detail({
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
   const send = async () => { setBusy("sheet"); try { await sendForGeneration(story.id, values); notify("Article sent to the Google Sheet for generation."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet."); } finally { setBusy(""); } };
+  const refresh = async () => { setBusy("refresh"); try { await syncGeneratedContent(); notify("Content refreshed from the Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t refresh generated content."); } finally { setBusy(""); } };
+  const approve = async () => { setBusy("approve"); try { await approveGeneratedContent(story.id); notify("Post approved in the app and Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t approve this post."); } finally { setBusy(""); } };
   return (
     <section>
       <div className="detail-top">
@@ -674,6 +692,8 @@ function Detail({
           <button onClick={discard}>
             <FiTrash2 /> Discard
           </button>
+          <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
+          {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}
           <button onClick={rerun} disabled={Boolean(busy)}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : "Regenerate analysis"}</button>
           <button onClick={save} disabled={Boolean(busy)}><FiCheck /> {busy === "save" ? "Saving…" : "Save changes"}</button>
         </div>
