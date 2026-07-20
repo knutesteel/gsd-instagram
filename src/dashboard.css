@@ -1,6 +1,18 @@
 .story-head,
 .story-row {
-  grid-template-columns: 3fr 1.05fr 1.3fr 0.65fr 1fr 0.9fr 1.25fr;
+  grid-template-columns: 2.7fr 0.8fr 1.05fr 1.3fr 0.65fr 1fr 0.9fr 1.25fr;
+}
+
+.identifier-link {
+  color: #bd4b2e;
+  font-size: 13px;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.identifier-empty {
+  color: #9a958b;
 }
 
 .date-added {
