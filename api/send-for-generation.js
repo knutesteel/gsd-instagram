@@ -60,7 +60,7 @@ async function formatAddedRow(accessToken, rowNumber) {
     method: "POST",
     headers: { ...json, Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ requests: [{ repeatCell: {
-      range: { sheetId: 0, startRowIndex: rowNumber - 1, endRowIndex: rowNumber, startColumnIndex: 0, endColumnIndex: 10 },
+      range: { sheetId: 0, startRowIndex: rowNumber - 1, endRowIndex: rowNumber },
       cell: { userEnteredFormat: { verticalAlignment: "TOP", wrapStrategy: "WRAP" } },
       fields: "userEnteredFormat(verticalAlignment,wrapStrategy)",
     } }] }),
@@ -94,7 +94,7 @@ export default async function handler(req, res) {
     const sourceFormulaRow = await latestColumnJFormulaRow(accessToken);
     const values = [[
       new Date().toISOString().slice(0, 10),
-      "New",
+      "Pending",
       article.title,
       article.generation_identifier,
       article.source_url || article.canonical_url || "",
