@@ -30,6 +30,8 @@ const typeLabel = (postType) => {
   const names = { carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" };
   return names[postType] || postType || "Carousel";
 };
+const createIdentifier = () => Array.from({ length: 6 }, () => "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(Math.random() * 26)]).join("");
+const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nUse the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
 
 async function latestColumnJFormulaRow(accessToken) {
   const headers = { Authorization: `Bearer ${accessToken}` };
@@ -81,30 +83,35 @@ export default async function handler(req, res) {
   const articleId = req.body?.articleId;
   if (!articleId) return res.status(400).json({ error: "Article is required." });
 
-  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,generation_identifier,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,caption)`, { headers: auth });
+  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,generation_identifier,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags)`, { headers: auth });
   if (!articleResponse.ok) return res.status(502).json({ error: "Couldn’t load the article for generation." });
   const article = (await articleResponse.json())[0];
   if (!article) return res.status(404).json({ error: "Article not found." });
   const concept = Array.isArray(article.post_concepts) ? article.post_concepts[0] : article.post_concepts;
-  if (!article.generation_identifier || !concept?.summary || !concept?.image_summary?.content) return res.status(422).json({ error: "Add an article summary and suggested content before sending this item." });
+  if (!concept?.summary || !concept?.image_summary?.content) return res.status(422).json({ error: "Add an article summary and suggested content before sending this item." });
 
   try {
     const accessToken = await googleAccessToken();
     const content = concept.image_summary.content;
-    const sourceFormulaRow = await latestColumnJFormulaRow(accessToken);
+    const identifier = article.generation_identifier || createIdentifier();
+    const url = article.source_url || article.canonical_url || "";
+    const type = typeLabel(concept.post_type);
+    const prompt = concept.detailed_prompt || generationPrompt({ title: article.title, url, panelCount: concept.panel_count, type, content });
     const values = [[
       new Date().toISOString().slice(0, 10),
       "Pending",
       article.title,
-      article.generation_identifier,
-      article.source_url || article.canonical_url || "",
+      identifier,
+      url,
       concept.summary,
       concept.panel_count || 1,
-      typeLabel(concept.post_type),
+      type,
       content,
+      prompt,
       concept.caption || "",
+      Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
     ]];
-    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:J")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method: "POST",
       headers: { ...json, Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ values }),
@@ -112,12 +119,11 @@ export default async function handler(req, res) {
     if (!response.ok) throw new Error("Couldn’t add the row to Google Sheets.");
     const result = await response.json();
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
-    await copyColumnJFormula(accessToken, sourceFormulaRow, destinationRow);
     await formatAddedRow(accessToken, destinationRow);
     const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
       headers: { ...auth, ...json, Prefer: "return=minimal" },
-      body: JSON.stringify({ generation_sheet_row: destinationRow }),
+      body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: destinationRow }),
     });
     if (!rowUpdate.ok) throw new Error("Couldn’t save the Google Sheets row reference.");
     return res.status(200).json({ updatedRange: result.updates?.updatedRange, sheetRow: destinationRow });
