@@ -7,6 +7,7 @@ const statusMap = {
   "Sent to Sheets": { app: "sent_to_sheets", sheet: "Pending" },
   Generated: { app: "generated", sheet: "Generated" },
   Approved: { app: "approved_to_post", sheet: "Approved" },
+  Posted: { app: "posted", sheet: "Posted" },
   Archived: { app: "discarded", sheet: "Archived" },
 };
 
