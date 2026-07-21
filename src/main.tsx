@@ -41,7 +41,8 @@ type Story = {
   generationIdentifier?: string | null;
   generationSheetRow?: number | null;
 };
-type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };\ntype TrendingTopic = { title: string; summary: string; suggested_content: string };
+type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
+type TrendingTopic = { title: string; summary: string; suggested_content: string };
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
