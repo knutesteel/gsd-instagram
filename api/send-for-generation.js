@@ -30,10 +30,13 @@ const typeLabel = (postType) => {
   const names = { carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" };
   return names[postType] || postType || "Carousel";
 };
-async function nextSequentialIdentifier(accessToken) {
+const numericIdentifier = (value) => /^\d+$/.test(String(value || "").trim()) ? String(value).trim() : "";
+async function nextSequentialIdentifier(accessToken, databaseIdentifiers = []) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!response.ok) throw new Error("Couldn’t determine the next sheet identifier.");
-  const current = ((await response.json()).values ?? []).slice(1).map((row) => Number(String(row[0]).trim())).filter(Number.isFinite);
+  const sheetIdentifiers = ((await response.json()).values ?? []).slice(1).map((row) => Number(numericIdentifier(row[0]))).filter((value) => Number.isInteger(value) && value > 0);
+  const appIdentifiers = databaseIdentifiers.map((value) => Number(numericIdentifier(value))).filter((value) => Number.isInteger(value) && value > 0);
+  const current = [...sheetIdentifiers, ...appIdentifiers];
   return String((current.length ? Math.max(...current) : 0) + 1);
 }
 const valueKey = (value) => String(value || "").trim().toLocaleLowerCase();
@@ -45,6 +48,13 @@ async function existingSheetRow(accessToken, article) {
   const title = valueKey(article.title);
   const index = rows.findIndex((row) => (url && valueKey(row[4]) === url) || (title && valueKey(row[2]) === title));
   return index < 0 ? null : { row: index + 2, identifier: String(rows[index][3] || "").trim() };
+}
+async function sheetRowForIdentifier(accessToken, identifier) {
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!response.ok) throw new Error("Couldn’t locate the sorted Google Sheets row.");
+  const rows = (await response.json()).values ?? [];
+  const index = rows.findIndex((row) => String(row[0] || "").trim() === String(identifier).trim());
+  return index >= 0 ? index + 1 : null;
 }
 const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nPanel 1 must directly introduce the article and show Hank reading a physical newspaper whose visible front-page headline is exactly: “${title}”. The squirrel responds to the headline. For Panels 2 onward, let Hank and the squirrel have a natural, funny conversation inspired by the article’s theme or humane takeaway. Do not mechanically restate the article or force its setting and props into every later panel; a natural setting change and conversational tangent are welcome. Keep both characters present and speaking in every panel, with the last panel landing a warm, practical thought. Use the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
 
@@ -111,9 +121,14 @@ export default async function handler(req, res) {
     const accessToken = await googleAccessToken();
     const content = concept.image_summary.content;
     const existing = await existingSheetRow(accessToken, article);
-    // A matching Sheet row wins. This makes resend safe and self-corrects a
-    // stale app identifier instead of creating a second row or reusing a number.
-    const identifier = existing?.identifier || await nextSequentialIdentifier(accessToken);
+    const identifiersResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&select=generation_identifier`, { headers: auth });
+    if (!identifiersResponse.ok) throw new Error("Couldn’t determine the next app identifier.");
+    const databaseIdentifiers = (await identifiersResponse.json()).map((row) => row.generation_identifier);
+    // The app/database identifier is authoritative. A legacy Sheet identifier
+    // is used only when the app record does not yet have a numeric identifier.
+    const identifier = numericIdentifier(article.generation_identifier)
+      || numericIdentifier(existing?.identifier)
+      || await nextSequentialIdentifier(accessToken, databaseIdentifiers);
     const url = article.source_url || article.canonical_url || "";
     const type = typeLabel(concept.post_type);
     const values = [[
@@ -131,19 +146,25 @@ export default async function handler(req, res) {
       Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
     ]];
     if (existing) {
-      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${existing.row}:L${existing.row}`)}?valueInputOption=USER_ENTERED`, {
-        method: "PUT",
+      // Preserve column J (Prompt), which is owned by the Sheet workflow.
+      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
+        method: "POST",
         headers: { ...json, Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ values }),
+        body: JSON.stringify({ valueInputOption: "USER_ENTERED", data: [
+          { range: `Sheet1!A${existing.row}:I${existing.row}`, values: [values[0].slice(0, 9)] },
+          { range: `Sheet1!K${existing.row}:L${existing.row}`, values: [[values[0][10], values[0][11]]] },
+        ] }),
       });
       if (!update.ok) throw new Error(await googleError(update, "Couldn’t update the existing Google Sheets row"));
+      await formatAndSortSheet(accessToken);
+      const sortedRow = await sheetRowForIdentifier(accessToken, identifier);
+      if (!sortedRow) throw new Error("The updated article could not be found after sorting the Google Sheet.");
       const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
         method: "PATCH", headers: { ...auth, ...json, Prefer: "return=minimal" },
-        body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: existing.row }),
+        body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sortedRow }),
       });
       if (!rowUpdate.ok) throw new Error("Couldn’t synchronize the existing Google Sheets row reference.");
-      await formatAndSortSheet(accessToken);
-      return res.status(200).json({ reusedExistingRow: true, sheetRow: existing.row, identifier });
+      return res.status(200).json({ reusedExistingRow: true, sheetRow: sortedRow, identifier });
     }
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method: "POST",
@@ -155,16 +176,15 @@ export default async function handler(req, res) {
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
     await copyPromptFromPreviousRow(accessToken, destinationRow);
     await formatAndSortSheet(accessToken);
-    const locator = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
-    const identifierRows = locator.ok ? (await locator.json()).values ?? [] : [];
-    const sortedRow = identifierRows.findIndex((row) => String(row[0] || "").trim() === identifier) + 1;
+    const sortedRow = await sheetRowForIdentifier(accessToken, identifier);
+    if (!sortedRow) throw new Error("The new article could not be found after sorting the Google Sheet.");
     const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
       headers: { ...auth, ...json, Prefer: "return=minimal" },
-      body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sortedRow || destinationRow }),
+      body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sortedRow }),
     });
     if (!rowUpdate.ok) throw new Error("Couldn’t save the Google Sheets row reference.");
-    return res.status(200).json({ updatedRange: result.updates?.updatedRange, sheetRow: destinationRow });
+    return res.status(200).json({ updatedRange: result.updates?.updatedRange, sheetRow: sortedRow, identifier });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t add the row to Google Sheets." });
   }

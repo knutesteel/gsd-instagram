@@ -46,12 +46,30 @@ async function importImage({ url, accessToken, supabaseUrl, headers, userId, con
 }
 async function restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId }) {
   const sheetIdentifiers = new Set(rows.slice(1).map((row) => String(row[3] || "").trim()).filter(Boolean));
+  const rowKey = (value) => String(value || "").trim().toLocaleLowerCase().replace(/\/$/, "");
   const response = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(userId)}&status=eq.sent_to_sheets&select=id,title,generation_identifier,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
   if (!response.ok) throw new Error("Couldn’t check Sent to Sheets items.");
   const missing = (await response.json()).filter((article) => article.generation_identifier && !sheetIdentifiers.has(String(article.generation_identifier).trim()));
   for (const article of missing) {
     const concept = article.post_concepts?.[0];
     if (!concept) continue;
+    const articleUrl = rowKey(article.source_url || article.canonical_url);
+    const articleTitle = rowKey(article.title);
+    const matchingIndex = rows.slice(1).findIndex((row) =>
+      (articleUrl && rowKey(row[4]) === articleUrl) || (articleTitle && rowKey(row[2]) === articleTitle),
+    );
+    if (matchingIndex >= 0) {
+      const rowNumber = matchingIndex + 2;
+      const correction = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!D${rowNumber}`)}?valueInputOption=USER_ENTERED`, {
+        method: "PUT", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ values: [[article.generation_identifier]] }),
+      });
+      if (!correction.ok) throw new Error(`Couldn’t correct identifier #${article.generation_identifier} in the Google Sheet.`);
+      rows[rowNumber - 1][3] = article.generation_identifier;
+      sheetIdentifiers.add(String(article.generation_identifier).trim());
+      const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(userId)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_sheet_row: rowNumber }) });
+      if (!rowUpdate.ok) throw new Error(`Couldn’t save the corrected row for #${article.generation_identifier}.`);
+      continue;
+    }
     const values = [[
       new Date().toISOString().slice(0, 10), "Pending", article.title || "", article.generation_identifier,
       article.source_url || article.canonical_url || "", concept.summary || "", concept.panel_count || 1,
@@ -70,7 +88,10 @@ async function restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers,
         body: JSON.stringify({ requests: [{ copyPaste: { source: { sheetId: 0, startRowIndex: rowNumber - 2, endRowIndex: rowNumber - 1, startColumnIndex: 9, endColumnIndex: 10 }, destination: { sheetId: 0, startRowIndex: rowNumber - 1, endRowIndex: rowNumber, startColumnIndex: 9, endColumnIndex: 10 }, pasteType: "PASTE_NORMAL", pasteOrientation: "NORMAL" } }] }),
       });
     }
-    await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(userId)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_sheet_row: rowNumber }) });
+    const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(userId)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_sheet_row: rowNumber }) });
+    if (!rowUpdate.ok) throw new Error(`Couldn’t save the restored row for #${article.generation_identifier}.`);
+    rows.push(values[0]);
+    sheetIdentifiers.add(String(article.generation_identifier).trim());
   }
   return missing.map((article) => article.generation_identifier);
 }

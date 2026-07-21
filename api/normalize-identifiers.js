@@ -18,6 +18,7 @@ async function googleToken() {
 
 const conceptOf = (article) => Array.isArray(article.post_concepts) ? article.post_concepts[0] : article.post_concepts;
 const titleKey = (value) => String(value || "").trim().toLocaleLowerCase();
+const urlKey = (value) => String(value || "").trim().toLocaleLowerCase().replace(/\/$/, "");
 const sheetValues = (article, identifier) => {
   const concept = conceptOf(article) || {};
   return [[new Date().toISOString().slice(0, 10), "Pending", article.title || "", identifier,
@@ -57,14 +58,22 @@ export default async function handler(req, res) {
     // them from article order: sorting, archiving, and delayed sheet writes would
     // otherwise renumber records independently in the app and Sheet.
     const numericIds = dataRows.map((row) => Number(String(row[3] || "").trim())).filter((value) => Number.isInteger(value) && value > 0);
-    let nextId = numericIds.length ? Math.max(...numericIds) + 1 : 1;
+    const databaseNumericIds = articles.map((article) => Number(String(article.generation_identifier || "").trim())).filter((value) => Number.isInteger(value) && value > 0);
+    const allNumericIds = [...numericIds, ...databaseNumericIds];
+    let nextId = allNumericIds.length ? Math.max(...allNumericIds) + 1 : 1;
+    const uniqueByUrl = new Map();
+    const urlCounts = new Map();
     const uniqueByTitle = new Map();
     const titleCounts = new Map();
     for (const article of articles) {
+      const url = urlKey(article.source_url || article.canonical_url);
+      if (url) urlCounts.set(url, (urlCounts.get(url) || 0) + 1);
       const title = titleKey(article.title);
       if (title) titleCounts.set(title, (titleCounts.get(title) || 0) + 1);
     }
     for (const article of articles) {
+      const url = urlKey(article.source_url || article.canonical_url);
+      if (url && urlCounts.get(url) === 1) uniqueByUrl.set(url, article);
       const title = titleKey(article.title);
       if (title && titleCounts.get(title) === 1) uniqueByTitle.set(title, article);
     }
@@ -73,7 +82,7 @@ export default async function handler(req, res) {
     dataRows.forEach((row, index) => {
       // Match content first. The app database is authoritative for an existing
       // article; sorting a sheet must never silently reassign its identifier.
-      const article = uniqueByTitle.get(titleKey(row[2]));
+      const article = uniqueByUrl.get(urlKey(row[4])) || uniqueByTitle.get(titleKey(row[2]));
       if (!article) return;
       matchedArticleIds.add(article.id);
       const stored = String(article.generation_identifier || "").trim();
@@ -99,7 +108,7 @@ export default async function handler(req, res) {
     // authored in the sheet while fixing an ID drift.
     const sheetIdUpdates = [];
     dataRows.forEach((row, index) => {
-      const article = uniqueByTitle.get(titleKey(row[2]));
+      const article = uniqueByUrl.get(urlKey(row[4])) || uniqueByTitle.get(titleKey(row[2]));
       const identifier = article && desiredId.get(article.id);
       if (identifier && String(row[3] || "").trim() !== identifier) {
         sheetIdUpdates.push({ range: `Sheet1!D${index + 2}`, values: [[identifier]] });
@@ -113,7 +122,8 @@ export default async function handler(req, res) {
       if (!updateIds.ok) throw new Error("Couldn’t synchronize identifiers in the Google Sheet.");
     }
     const appChanges = articles.filter((article) => desiredId.has(article.id) && String(article.generation_identifier || "") !== desiredId.get(article.id));
-    await Promise.all(appChanges.map((article) => fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_identifier: desiredId.get(article.id) }) })));
+    const appUpdateResponses = await Promise.all(appChanges.map((article) => fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_identifier: desiredId.get(article.id) }) })));
+    if (appUpdateResponses.some((response) => !response.ok)) throw new Error("Couldn’t save synchronized identifiers in the app database.");
     const formatting = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ requests: [
       { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endColumnIndex: 17 }, cell: { userEnteredFormat: { horizontalAlignment: "LEFT", verticalAlignment: "TOP", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy)" } },
       { sortRange: { range: { sheetId: 0, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 17 }, sortSpecs: [{ dimensionIndex: 3, sortOrder: "DESCENDING" }] } },
@@ -122,12 +132,13 @@ export default async function handler(req, res) {
     const sortedResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!sortedResponse.ok) throw new Error("Couldn’t verify the sorted generation sheet.");
     const identifiers = (await sortedResponse.json()).values ?? [];
-    await Promise.all(articles.map((article) => {
+    const rowUpdateResponses = await Promise.all(articles.map((article) => {
       const identifier = desiredId.get(article.id);
-      if (!identifier) return Promise.resolve();
+      if (!identifier) return Promise.resolve(null);
       const sheetRow = identifiers.findIndex((row) => String(row[0] || "").trim() === identifier) + 1;
       return fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sheetRow || null }) });
     }));
+    if (rowUpdateResponses.some((response) => response && !response.ok)) throw new Error("Couldn’t save sorted Google Sheets row references in the app database.");
     return res.status(200).json({ normalized: articles.length, restoredIdentifiers: missingSent.map((article) => desiredId.get(article.id)), changed: Boolean(missingSent.length || appChanges.length || sheetIdUpdates.length) });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t normalize identifiers." }); }
 }

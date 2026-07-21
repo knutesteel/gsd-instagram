@@ -45,19 +45,21 @@ export default async function handler(req, res) {
     if (!article) return res.status(404).json({ error: "Article not found." });
 
     let sheetRow = article.generation_sheet_row;
+    let accessToken = null;
     // Rows can move or be recreated after a sheet cleanup. Resolve by identifier
     // before falling back to the saved row number so the wrong story is never updated.
     if (article.generation_identifier) {
-      const accessToken = await googleAccessToken();
+      accessToken = await googleAccessToken();
       const lookup = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!B:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
       if (!lookup.ok) throw new Error("Couldn’t find the article in the Google Sheet.");
       const rows = (await lookup.json()).values ?? [];
       const foundIndex = rows.findIndex((row) => String(row[2] || "").trim() === String(article.generation_identifier).trim());
-      if (foundIndex >= 0) sheetRow = foundIndex + 1;
+      if (foundIndex < 0) throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
+      sheetRow = foundIndex + 1;
     }
 
     if (sheetRow) {
-      const accessToken = await googleAccessToken();
+      accessToken ||= await googleAccessToken();
       const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${sheetRow}`)}?valueInputOption=USER_ENTERED`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },

@@ -28,13 +28,23 @@ export default async function handler(req, res) {
   const articleId = req.body?.articleId;
   if (!articleId) return res.status(400).json({ error: "Article is required." });
   try {
-    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,generation_sheet_row`, { headers });
+    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,generation_identifier,generation_sheet_row`, { headers });
+    if (!articleResponse.ok) throw new Error("Couldn’t load the article before approval.");
     const article = (await articleResponse.json())[0];
     if (!article?.generation_sheet_row) return res.status(422).json({ error: "This article has not been sent to the generation sheet yet." });
     const accessToken = await googleAccessToken();
-    const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${article.generation_sheet_row}`)}?valueInputOption=USER_ENTERED`, { method: "PUT", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ values: [["Approved"]] }) });
+    let sheetRow = article.generation_sheet_row;
+    if (article.generation_identifier) {
+      const lookup = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!lookup.ok) throw new Error("Couldn’t locate the article in the Google Sheet.");
+      const rows = (await lookup.json()).values ?? [];
+      const rowIndex = rows.findIndex((row) => String(row[0] || "").trim() === String(article.generation_identifier).trim());
+      if (rowIndex < 0) throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
+      sheetRow = rowIndex + 1;
+    }
+    const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${sheetRow}`)}?valueInputOption=USER_ENTERED`, { method: "PUT", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ values: [["Approved"]] }) });
     if (!update.ok) throw new Error("Couldn’t set the Google Sheet status to Approved.");
-    const statusUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "approved_to_post" }) });
+    const statusUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "approved_to_post", generation_sheet_row: sheetRow }) });
     if (!statusUpdate.ok) throw new Error("Couldn’t save the Approved status in the app.");
     return res.status(200).json({ status: "Approved" });
   } catch (error) {
