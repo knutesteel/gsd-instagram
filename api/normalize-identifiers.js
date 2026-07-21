@@ -53,40 +53,45 @@ export default async function handler(req, res) {
     if (!sheetResponse.ok) throw new Error("Couldn’t read the generation sheet.");
     const rows = (await sheetResponse.json()).values ?? [];
     const dataRows = rows.slice(1);
-    const originalIdCounts = new Map();
+    // Identifiers are assigned once, when a record is first sent.  Never derive
+    // them from article order: sorting, archiving, and delayed sheet writes would
+    // otherwise renumber records independently in the app and Sheet.
+    const numericIds = dataRows.map((row) => Number(String(row[3] || "").trim())).filter(Number.isFinite);
+    let nextId = numericIds.length ? Math.max(...numericIds) + 1 : 1;
+    const uniqueByTitle = new Map();
     const titleCounts = new Map();
     for (const article of articles) {
-      const oldId = String(article.generation_identifier || "").trim();
-      if (oldId) originalIdCounts.set(oldId, (originalIdCounts.get(oldId) || 0) + 1);
       const title = titleKey(article.title);
       if (title) titleCounts.set(title, (titleCounts.get(title) || 0) + 1);
     }
-    const byOldId = new Map(articles.filter((article) => article.generation_identifier && originalIdCounts.get(String(article.generation_identifier).trim()) === 1).map((article) => [String(article.generation_identifier).trim(), article]));
-    const byTitle = new Map(articles.filter((article) => titleKey(article.title) && titleCounts.get(titleKey(article.title)) === 1).map((article) => [titleKey(article.title), article]));
-    const desiredId = new Map(articles.map((article, index) => [article.id, String(index + 1)]));
+    for (const article of articles) {
+      const title = titleKey(article.title);
+      if (title && titleCounts.get(title) === 1) uniqueByTitle.set(title, article);
+    }
+    const desiredId = new Map();
     const matchedArticleIds = new Set();
     const updates = [];
     dataRows.forEach((row, index) => {
-      const article = byOldId.get(String(row[3] || "").trim()) || byTitle.get(titleKey(row[2]));
+      // Match content first.  The Sheet's identifier is authoritative for an
+      // existing row, even if an earlier app release stored a different number.
+      const article = uniqueByTitle.get(titleKey(row[2]));
       if (!article) return;
       matchedArticleIds.add(article.id);
-      const identifier = desiredId.get(article.id);
-      if (String(row[3] || "").trim() !== identifier) updates.push({ range: `Sheet1!D${index + 2}`, values: [[identifier]] });
+      desiredId.set(article.id, String(row[3] || "").trim());
     });
-    if (updates.length) {
-      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ valueInputOption: "USER_ENTERED", data: updates }) });
-      if (!update.ok) throw new Error("Couldn’t update sequential sheet identifiers.");
-    }
     // A previous send can have marked an item Sent to Sheets after a transient append failure.
     // Repair those rows here, matching by title as well as identifier so each article is restored once.
     const missingSent = articles.filter((article) => article.status === "sent_to_sheets" && !matchedArticleIds.has(article.id));
     for (const article of missingSent) {
-      const append = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ values: sheetValues(article, desiredId.get(article.id)) }) });
-      if (!append.ok) throw new Error(`Couldn’t restore #${desiredId.get(article.id)} to the Google Sheet.`);
+      const identifier = /^\d+$/.test(String(article.generation_identifier || "")) && !numericIds.includes(Number(article.generation_identifier))
+        ? String(article.generation_identifier) : String(nextId++);
+      desiredId.set(article.id, identifier);
+      const append = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ values: sheetValues(article, identifier) }) });
+      if (!append.ok) throw new Error(`Couldn’t restore #${identifier} to the Google Sheet.`);
       const row = Number(String((await append.json()).updates?.updatedRange || "").match(/!A(\d+):/i)?.[1]);
       await copyPromptFromPreviousRow(accessToken, row);
     }
-    const appChanges = articles.filter((article) => String(article.generation_identifier || "") !== desiredId.get(article.id));
+    const appChanges = articles.filter((article) => desiredId.has(article.id) && String(article.generation_identifier || "") !== desiredId.get(article.id));
     await Promise.all(appChanges.map((article) => fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_identifier: desiredId.get(article.id) }) })));
     const formatting = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ requests: [
       { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endColumnIndex: 17 }, cell: { userEnteredFormat: { horizontalAlignment: "LEFT", verticalAlignment: "TOP", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy)" } },
@@ -98,9 +103,10 @@ export default async function handler(req, res) {
     const identifiers = (await sortedResponse.json()).values ?? [];
     await Promise.all(articles.map((article) => {
       const identifier = desiredId.get(article.id);
+      if (!identifier) return Promise.resolve();
       const sheetRow = identifiers.findIndex((row) => String(row[0] || "").trim() === identifier) + 1;
       return fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sheetRow || null }) });
     }));
-    return res.status(200).json({ normalized: articles.length, restoredIdentifiers: missingSent.map((article) => desiredId.get(article.id)), changed: Boolean(updates.length || missingSent.length || appChanges.length) });
+    return res.status(200).json({ normalized: articles.length, restoredIdentifiers: missingSent.map((article) => desiredId.get(article.id)), changed: Boolean(missingSent.length || appChanges.length) });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t normalize identifiers." }); }
 }
