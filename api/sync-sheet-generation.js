@@ -2,12 +2,12 @@ import { createPrivateKey, sign } from "node:crypto";
 
 const spreadsheetId = "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
-const driveFileId = (url) => String(url || "").match(/\/d\/([^/]+)/)?.[1] || String(url || "").match(/[?&]id=([^&]+)/)?.[1];
+const driveFileId = (url) => String(url || "").match(/[?&]id=([A-Za-z0-9_-]+)/)?.[1] || String(url || "").match(/\/file\/d\/([A-Za-z0-9_-]+)/)?.[1] || String(url || "").match(/\/d\/([A-Za-z0-9_-]+)(?:[=/?]|$)/)?.[1];
 const driveImageUrl = (url) => {
   const id = driveFileId(url);
-  // Google Drive's file-view URL is an HTML page, not a dependable image source.
-  // The thumbnail endpoint renders directly in the app while the originals remain in Drive.
-  return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w1600` : url;
+  // Keep a stable file reference in the database. The app serves it through a
+  // same-origin image endpoint instead of depending on Google's thumbnail UI.
+  return id ? `https://drive.google.com/file/d/${id}/view` : url;
 };
 const extensionFor = (contentType) => contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
 const typeLabel = (postType) => ({ carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" }[postType] || postType || "Carousel");
@@ -25,6 +25,7 @@ async function googleToken() {
 async function importImage({ url, accessToken, supabaseUrl, headers, userId, conceptId, sequence }) {
   const id = driveFileId(url);
   const candidates = id ? [
+    `https://lh3.googleusercontent.com/d/${id}=w2400`,
     `https://www.googleapis.com/drive/v3/files/${id}?alt=media`,
     `https://drive.google.com/uc?export=download&id=${id}`,
   ] : [url];
@@ -152,8 +153,8 @@ export default async function handler(req, res) {
         }))).filter(Boolean);
         if (imported.length) {
           await fetch(`${supabaseUrl}/rest/v1/assets?concept_id=eq.${concept.id}&source=eq.generated`, { method: "DELETE", headers });
-          await fetch(`${supabaseUrl}/rest/v1/assets`, { method: "POST", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify(imported.map((asset) => ({ concept_id: concept.id, user_id: user.id, sequence: asset.sequence, media_type: "image", source: "generated", storage_path: asset.storage_path, mime_type: asset.mime_type }))) });
-          await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ image_summary: { ...(concept.image_summary || {}), sheet_images: images, imported_image_count: imported.length } }) });
+          const assetInsert = await fetch(`${supabaseUrl}/rest/v1/assets`, { method: "POST", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify(imported.map((asset) => ({ concept_id: concept.id, user_id: user.id, sequence: asset.sequence, media_type: "image", source: "generated", storage_path: asset.storage_path, mime_type: asset.mime_type }))) });
+          if (assetInsert.ok) await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ image_summary: { ...(concept.image_summary || {}), sheet_images: images, imported_image_count: imported.length } }) });
         }
       }
 

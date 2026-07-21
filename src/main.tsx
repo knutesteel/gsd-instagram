@@ -43,11 +43,52 @@ type Story = {
   generationSheetRow?: number | null;
   featuredImage?: string | null;
 };
-type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[]; assets?: Array<{ storage_path: string; sequence: number }> };
+type Concept = { id?: string; summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[]; assets?: Array<{ storage_path: string; sequence: number }> };
 type TrendingTopic = { title: string; platform: string; summary: string; suggested_content: string; source_url?: string };
 
 const APP_VERSION = __APP_VERSION__;
 const APP_LAST_UPDATED = __APP_UPDATED_AT__;
+
+function driveFileIdFromUrl(value: unknown) {
+  const url = String(value ?? "");
+  return url.match(/[?&]id=([A-Za-z0-9_-]+)/)?.[1]
+    ?? url.match(/\/file\/d\/([A-Za-z0-9_-]+)/)?.[1]
+    ?? url.match(/\/d\/([A-Za-z0-9_-]+)(?:[=/?]|$)/)?.[1]
+    ?? null;
+}
+
+function displayImageUrl(value: unknown) {
+  const url = String(value ?? "").trim();
+  const fileId = driveFileIdFromUrl(url);
+  return fileId ? `/api/image?fileId=${encodeURIComponent(fileId)}` : url;
+}
+
+function directImageFallback(value: unknown) {
+  const url = String(value ?? "").trim();
+  const fileId = driveFileIdFromUrl(url);
+  return fileId ? `https://lh3.googleusercontent.com/d/${fileId}=w2000` : url;
+}
+
+function storyFromRow(row: any): Story {
+  const postConcept = row.post_concepts?.[0];
+  const imageSummary = postConcept?.image_summary ?? {};
+  const sheetImage = Array.isArray(imageSummary.sheet_images) ? imageSummary.sheet_images.find(Boolean) : null;
+  const isTextOverview = imageSummary.origin === "text_overview";
+  return {
+    id: row.id,
+    title: row.title,
+    createdAt: row.created_at ?? null,
+    generationIdentifier: row.generation_identifier ?? null,
+    generationSheetRow: row.generation_sheet_row ?? null,
+    url: isTextOverview ? "" : row.source_url ?? row.canonical_url ?? "",
+    overview: postConcept?.summary ?? "",
+    category: row.category ?? "Uncategorized",
+    score: row.rank ?? 0,
+    type: postConcept?.post_type ?? "carousel",
+    featuredImage: sheetImage ? displayImageUrl(sheetImage) : null,
+    status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"],
+  };
+}
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -77,8 +118,15 @@ function App() {
   };
   const loadConcept = async (articleId: string) => {
     if (!supabase || !articleId) return;
-    const { data } = await supabase.from("post_concepts").select("summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags,assets(storage_path,sequence)").eq("article_id", articleId).maybeSingle();
-    setConcept(await hydrateConceptImages(data));
+    const client = supabase;
+    const { data, error } = await client.from("post_concepts").select("id,summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags").eq("article_id", articleId).maybeSingle();
+    if (error || !data) {
+      setConcept(null);
+      if (error) notify(`Couldn’t load generation suggestions: ${error.message}`);
+      return;
+    }
+    const { data: assets } = await client.from("assets").select("storage_path,sequence").eq("concept_id", data.id).eq("is_active", true).order("sequence");
+    setConcept(await hydrateConceptImages({ ...data, assets: assets ?? [] }));
   };
   const notify = (message: string) => {
     setToast(message);
@@ -100,7 +148,7 @@ function App() {
     if (!supabase || !userId) return;
     supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)").order("created_at", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", featuredImage: Array.isArray(row.post_concepts?.[0]?.image_summary?.sheet_images) ? row.post_concepts[0].image_summary.sheet_images.find(Boolean) ?? null : null, status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map(storyFromRow);
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
@@ -212,7 +260,7 @@ function App() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
     await supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)").order("created_at", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", featuredImage: Array.isArray(row.post_concepts?.[0]?.image_summary?.sheet_images) ? row.post_concepts[0].image_summary.sheet_images.find(Boolean) ?? null : null, status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
+      const saved: Story[] = (rows ?? []).map(storyFromRow);
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -231,8 +279,8 @@ function App() {
           {(
             [
               { key: "dashboard", icon: <FiGrid />, label: "Dashboard" },
-              { key: "articles", icon: <FiFileText />, label: "Generation Details" },
               { key: "discover", icon: <FiCompass />, label: "Discover" },
+              { key: "articles", icon: <FiFileText />, label: "Generation Details" },
               { key: "archive", icon: <FiArchive />, label: "Archive" },
             ] as const
           ).map((n) => (
@@ -300,7 +348,9 @@ function App() {
             story={active}
             concept={concept}
             saveDetail={saveDetail}
-            reanalyze={() => research({ mode: "manual", manualUrl: active.url }).then(() => loadConcept(active.id))}
+            reanalyze={() => concept?.image_summary?.origin === "text_overview"
+              ? research({ mode: "overview", overview: concept.image_summary.source_overview ?? concept.summary ?? active.overview }).then(() => loadConcept(active.id))
+              : research({ mode: "manual", manualUrl: active.url }).then(() => loadConcept(active.id))}
             notify={notify}
             previous={() => navigate(-1)}
             next={() => navigate(1)}
@@ -568,7 +618,7 @@ function ArticleList({
   }, new Map<Story["status"], Story[]>()),).sort(([a], [b]) => statusOrder.indexOf(a) - statusOrder.indexOf(b));
   return <section>
     <header className="page-header">
-      <div><h1>Article Detail</h1><p>Browse your articles and open any title for its complete content and generation details.</p></div>
+      <div><h1>Generation Details</h1><p>Browse active items by status, then open any title to review its generation suggestions.</p></div>
     </header>
     <div className="filter-row article-list-filter">
       <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | Story["status"])} aria-label="Filter articles by status">
@@ -581,7 +631,7 @@ function ArticleList({
         <header><h2>{status}</h2><span>{stories.length} {stories.length === 1 ? "article" : "articles"}</span></header>
         <div className="article-list-grid">{stories.map((item) => <article className="article-list-card" key={item.id}>
           <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span></div>
-          <div className="article-thumbnail">{item.featuredImage ? <img src={item.featuredImage} alt={`First generated image for ${item.title}`} /> : <span>No image yet</span>}</div>
+          <div className="article-thumbnail">{item.featuredImage ? <img src={item.featuredImage} alt={`First generated image for ${item.title}`} referrerPolicy="no-referrer" /> : <span>No image yet</span>}</div>
         </article>)}</div>
       </section>)}
     </div>
@@ -704,8 +754,8 @@ function Discover({
         <div>
           <h1>Find fresh stories</h1>
           <p>
-            Discover high-potential Instagram stories based on your topics and
-            current conversations worth a Hank-and-the-squirrel take.
+            Find high-potential stories, analyze a specific URL, or turn your own
+            text overview into a Hank-and-the-squirrel post suggestion without an article.
           </p>
         </div>
       </header>
@@ -716,7 +766,7 @@ function Discover({
             <button className={mode === "overview" ? "selected" : ""} onClick={() => setMode("overview")}>Text overview</button>
             <button className={mode === "system" ? "selected" : ""} onClick={() => setMode("system")}>System Search</button>
           </div>
-          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <Field label="What should Hank and the squirrel comment on?"><textarea value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field> : <><Field label="What should we search for?"><input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="e.g. surprising focus research or clever animal behavior" /></Field>
+          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field> : <><Field label="What should we search for?"><input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="e.g. surprising focus research or clever animal behavior" /></Field>
           <p className="field-label">Topics</p>
           <div className="chips">
             {topics.map((topic) => <span key={topic}>{topic} <button aria-label={`Remove ${topic}`} onClick={() => setTopics(topics.filter((item) => item !== topic))}><FiX /></button></span>)}
@@ -725,11 +775,11 @@ function Discover({
           <button className="button primary wide" onClick={run}>
             {searching ? (
               <>
-                <FiRefreshCw className="spin" /> Researching stories
+                <FiRefreshCw className="spin" /> {mode === "overview" ? "Generating suggestion" : "Researching stories"}
               </>
             ) : (
               <>
-                <FiSearch /> Search for stories
+                {mode === "overview" ? <><FiEdit3 /> Generate Suggested Post</> : <><FiSearch /> Search for stories</>}
               </>
             )}
           </button>
@@ -823,13 +873,15 @@ function Detail({
   // Prefer app-storage copies. If any cannot be signed, retain the Drive image
   // URLs as a fallback instead of rendering an empty gallery.
   const renderedImages = Array.isArray(concept?.image_summary?.rendered_images) ? concept.image_summary.rendered_images.filter(Boolean) : [];
-  const sheetImages = Array.isArray(concept?.image_summary?.sheet_images) ? concept.image_summary.sheet_images.filter(Boolean) : [];
+  const rawSheetImages = Array.isArray(concept?.image_summary?.sheet_images) ? concept.image_summary.sheet_images.filter(Boolean) : [];
+  const sheetImages = rawSheetImages.map(displayImageUrl);
   const images = (renderedImages.length ? renderedImages : sheetImages) as string[];
-  const fallbackImage = (index: number) => sheetImages[index] || "";
+  const fallbackImage = (index: number) => directImageFallback(rawSheetImages[index]);
   const lockedAfterSheetSend = ["Sent to Sheets", "Generated", "Approved"].includes(story.status);
+  const isTextOverview = concept?.image_summary?.origin === "text_overview";
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
-  useEffect(() => { void syncGeneratedContent(); }, [story.id]);
+  useEffect(() => { void syncGeneratedContent().catch(() => undefined); }, [story.id]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
@@ -838,6 +890,9 @@ function Detail({
   const approve = async () => { setBusy("approve"); try { await approveGeneratedContent(story.id); notify("Post approved in the app and Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t approve this post."); } finally { setBusy(""); } };
   return (
     <section>
+      <header className="page-header generation-suggestions-header">
+        <div><h1>Generation Suggestions</h1><p>Review the suggested content, generated images, caption, and hashtags before approval.</p></div>
+      </header>
       <div className="detail-top">
         <div className="detail-actions">
           <div className="detail-navigation">
@@ -849,18 +904,18 @@ function Detail({
           </button>
           </div>
           <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Archived</option></select></label>
-          <button onClick={() => void refresh()} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
+          <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
           {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}
-          <button onClick={rerun} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : "Regenerate analysis"}</button>
+          <button onClick={rerun} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : isTextOverview ? "Regenerate suggestion" : "Regenerate analysis"}</button>
           <button onClick={save} disabled={Boolean(busy) || lockedAfterSheetSend}><FiCheck /> {busy === "save" ? "Saving…" : "Save changes"}</button>
         </div>
       </div>
       <div className="detail-fields">
         <div className="left-fields detail-editor-fields">
-          <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
-          <Field label="Article Summary"><textarea className="summary-editor" value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder="A two-to-three sentence article summary" /></Field>
+          <Field label={isTextOverview ? "Suggestion title" : "Article title"}><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
+          <Field label={isTextOverview ? "Overview summary" : "Article Summary"}><textarea className="summary-editor" value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder={isTextOverview ? "A concise summary of the post idea" : "A two-to-three sentence article summary"} /></Field>
           <div className="detail-metadata-row">
-            <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
+            <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} placeholder={isTextOverview ? "No article linked" : "https://example.com/article"} disabled={isTextOverview} /></Field>
             <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Carousel</option><option value="single_image">Single Image</option><option value="multi_pane_cartoon">Multi-pane Cartoon</option><option value="reel">Reel</option></select></Field>
             <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
             <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
@@ -874,18 +929,20 @@ function Detail({
         {images.length > 0 ? <div className="detail-generated-content">
           <div className="detail-asset-gallery">
             <div className="detail-asset-stage">
-              <img src={images[activeImage]} alt={`Generated panel ${activeImage + 1}`} onError={(event) => {
+              <img src={images[activeImage]} alt={`Generated panel ${activeImage + 1}`} referrerPolicy="no-referrer" onError={(event) => {
                 const fallback = fallbackImage(activeImage);
-                if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+                event.currentTarget.onerror = null;
+                if (fallback) event.currentTarget.src = fallback;
               }} />
               {images.length > 1 && <>
                 <button className="asset-arrow previous" aria-label="Previous image" onClick={() => setActiveImage((index) => (index - 1 + images.length) % images.length)}><FiArrowLeft /></button>
                 <button className="asset-arrow next" aria-label="Next image" onClick={() => setActiveImage((index) => (index + 1) % images.length)}><FiArrowRight /></button>
               </>}
             </div>
-            {images.length > 1 && <div className="detail-asset-thumbnails">{images.map((url, index) => <button key={url} className={index === activeImage ? "active" : ""} aria-label={`Show panel ${index + 1}`} onClick={() => setActiveImage(index)}><img src={url} alt={`Panel ${index + 1}`} onError={(event) => {
+            {images.length > 1 && <div className="detail-asset-thumbnails">{images.map((url, index) => <button key={url} className={index === activeImage ? "active" : ""} aria-label={`Show panel ${index + 1}`} onClick={() => setActiveImage(index)}><img src={url} alt={`Panel ${index + 1}`} referrerPolicy="no-referrer" onError={(event) => {
               const fallback = fallbackImage(index);
-              if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+              event.currentTarget.onerror = null;
+              if (fallback) event.currentTarget.src = fallback;
             }} /></button>)}</div>}
           </div>
           <div className="generated-post-copy"><b>Post Comment</b><p>{values.caption || "No post comment provided."}</p><b>Hashtags</b><p>{values.hashtags || "No hashtags provided."}</p></div>

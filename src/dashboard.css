@@ -93,6 +93,9 @@
   padding: 0;
 }
 
+.generation-suggestions-header { margin-bottom: 18px; }
+.generation-suggestions-header + .detail-top { margin-bottom: 24px; }
+
 .detail-generated-content h2 {
   margin: 0;
   font-family: "Playfair Display", serif;
@@ -254,6 +257,8 @@
 
 /* Discover uses an even two-column split on desktop. */
 .discover-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.segmented { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.overview-editor { min-height: 220px !important; }
 
 
 .page-actions { display: flex; flex-wrap: wrap; gap: 10px; }

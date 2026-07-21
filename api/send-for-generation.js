@@ -129,7 +129,8 @@ export default async function handler(req, res) {
     const identifier = numericIdentifier(article.generation_identifier)
       || numericIdentifier(existing?.identifier)
       || await nextSequentialIdentifier(accessToken, databaseIdentifiers);
-    const url = article.source_url || article.canonical_url || "";
+    const isTextOverview = concept.image_summary?.origin === "text_overview";
+    const url = isTextOverview ? "" : article.source_url || article.canonical_url || "";
     const type = typeLabel(concept.post_type);
     const values = [[
       new Date().toISOString().slice(0, 10),
