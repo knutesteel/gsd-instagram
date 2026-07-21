@@ -110,7 +110,7 @@ export default async function handler(req, res) {
     if (!sheet.ok) throw new Error("Couldn’t read the generation sheet.");
     const rows = (await sheet.json()).values ?? [];
     const restoredIdentifiers = await restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
-    const syncedRows = rows.slice(1).filter((row) => ["generated", "approved"].includes(String(row[1]).trim().toLowerCase()) && row[3]);
+    const syncedRows = rows.slice(1).filter((row) => ["generated", "approved", "posted"].includes(String(row[1]).trim().toLowerCase()) && row[3]);
     if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {}, restoredIdentifiers });
     const updatedArticleIds = [];
     const statuses = {};
@@ -123,6 +123,14 @@ export default async function handler(req, res) {
       if (!concept) continue;
 
       const sheetStatus = String(row[1]).trim().toLowerCase();
+      if (sheetStatus === "posted") {
+        if (article.status === "posted") continue;
+        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "posted" }) });
+        if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as posted.");
+        updatedArticleIds.push(article.id);
+        statuses[article.id] = "Posted";
+        continue;
+      }
       if (sheetStatus === "approved") {
         if (article.status === "approved_to_post") continue;
         const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "approved_to_post" }) });
