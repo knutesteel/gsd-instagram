@@ -130,11 +130,11 @@
 .detail-editor-fields > .field:nth-child(6),
 .detail-editor-fields > .field:nth-child(7) { grid-column: 1 / -1; }
 .detail-editor-fields > .field:nth-child(3),
-.detail-editor-fields > .field:nth-child(4) { grid-column: span 2; }
+.detail-editor-fields > .field:nth-child(4) { grid-column: span 1; }
 .detail-number-row { display: contents; }
 .detail-number-row .field { grid-column: span 1; }
 .detail-number-row .field input { max-width: 130px; }
-.summary-editor { min-height: 164px !important; }
+.summary-editor { min-height: 92px !important; }
 .hashtags-editor { min-height: 56px !important; }
 .detail-content-section { margin-top: 34px; padding-top: 26px; border-top: 1px solid #dcd6cb; }
 .detail-content-heading { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; }
