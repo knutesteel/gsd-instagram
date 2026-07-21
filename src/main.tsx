@@ -25,6 +25,7 @@ import { supabase, supabaseConfigured } from "./lib/supabase";
 
 type Screen =
   | "dashboard"
+  | "articles"
   | "discover"
   | "detail"
   | "archive";
@@ -40,6 +41,7 @@ type Story = {
   status: "New" | "Sent to Sheets" | "Generated" | "Approved" | "Archived";
   generationIdentifier?: string | null;
   generationSheetRow?: number | null;
+  featuredImage?: string | null;
 };
 type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
 type TrendingTopic = { title: string; summary: string; suggested_content: string };
@@ -49,6 +51,7 @@ function App() {
   const [items, setItems] = useState<Story[]>([]);
   const [selected, setSelected] = useState("");
   const [query, setQuery] = useState("");
+  const [articleStatusFilter, setArticleStatusFilter] = useState<"all" | Story["status"]>("all");
   const [searching, setSearching] = useState(false);
   const [concept, setConcept] = useState<Concept | null>(null);
   const [toast, setToast] = useState("");
@@ -56,6 +59,7 @@ function App() {
   const [userId, setUserId] = useState<string | null>(null);
   const active = items.find((i) => i.id === selected) ?? items[0];
   const proposed = items.filter((i) => i.status !== "Archived");
+  const detailNavigationItems = items.filter((item) => item.status !== "Archived" && (articleStatusFilter === "all" || item.status === articleStatusFilter));
   const loadConcept = async (articleId: string) => {
     if (!supabase || !articleId) return;
     const { data } = await supabase.from("post_concepts").select("summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags").eq("article_id", articleId).maybeSingle();
@@ -79,9 +83,9 @@ function App() {
   }, []);
   useEffect(() => {
     if (!supabase || !userId) return;
-    supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("created_at", { ascending: false }).then(({ data, error }) => {
+    supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)").order("created_at", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", featuredImage: Array.isArray(row.post_concepts?.[0]?.image_summary?.sheet_images) ? row.post_concepts[0].image_summary.sheet_images.find(Boolean) ?? null : null, status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
@@ -149,8 +153,10 @@ function App() {
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, status: "Approved" } : item));
   };
   const navigate = (next: number) => {
-    const index = items.findIndex((i) => i.id === selected);
-    setSelected(items[(index + next + items.length) % items.length].id);
+    if (!detailNavigationItems.length) return;
+    const index = detailNavigationItems.findIndex((i) => i.id === selected);
+    const safeIndex = index < 0 ? 0 : index;
+    setSelected(detailNavigationItems[(safeIndex + next + detailNavigationItems.length) % detailNavigationItems.length].id);
   };
   const research = async (payload: Record<string, unknown>) => {
     if (!supabase) throw new Error("Supabase is not configured.");
@@ -159,8 +165,8 @@ function App() {
     const response = await fetch("/api/research", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify(payload) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
-    await supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary)").order("created_at", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
+    await supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)").order("created_at", { ascending: false }).then(({ data: rows }) => {
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", featuredImage: Array.isArray(row.post_concepts?.[0]?.image_summary?.sheet_images) ? row.post_concepts[0].image_summary.sheet_images.find(Boolean) ?? null : null, status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -179,6 +185,7 @@ function App() {
           {(
             [
               { key: "dashboard", icon: <FiGrid />, label: "Dashboard" },
+              { key: "articles", icon: <FiFileText />, label: "Article Detail" },
               { key: "discover", icon: <FiCompass />, label: "Discover" },
               { key: "archive", icon: <FiArchive />, label: "Archive" },
             ] as const
@@ -220,6 +227,16 @@ function App() {
             onStatus={(id, status) => void setArticleStatus(id, status).then(() => { notify(`Status changed to ${status} in the app and Google Sheet.`); if (status === "Archived") setScreen("archive"); }).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update the status."))}
             approve={(id) => void setArticleStatus(id, "Approved").then(() => notify("Post approved in the app and Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t approve this post."))}
             refreshStatus={() => void syncGeneratedContent().then(() => notify("Status and generated content refreshed from the Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t refresh status."))}
+            statusFilter={articleStatusFilter}
+            setStatusFilter={setArticleStatusFilter}
+          />
+        )}
+        {screen === "articles" && (
+          <ArticleList
+            items={items}
+            statusFilter={articleStatusFilter}
+            setStatusFilter={setArticleStatusFilter}
+            select={(id) => { setSelected(id); void loadConcept(id); setScreen("detail"); }}
           />
         )}
         {screen === "discover" && (
@@ -383,6 +400,8 @@ function Dashboard({
   onStatus,
   approve,
   refreshStatus,
+  statusFilter,
+  setStatusFilter,
 }: {
   items: Story[];
   discover: () => void;
@@ -390,6 +409,8 @@ function Dashboard({
   onStatus: (id: string, status: Story["status"]) => void;
   approve: (id: string) => void;
   refreshStatus: () => void;
+  statusFilter: "all" | Story["status"];
+  setStatusFilter: (value: "all" | Story["status"]) => void;
 }) {
   const [filter, setFilter] = useState("");
   const [category, setCategory] = useState("all");
@@ -397,7 +418,7 @@ function Dashboard({
   const [minimumScore, setMinimumScore] = useState("0");
   const [dateSort, setDateSort] = useState<"newest" | "oldest">("newest");
   const shown = items
-    .filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore))
+    .filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore) && (statusFilter === "all" || i.status === statusFilter))
     .sort((a, b) => {
       const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -438,6 +459,7 @@ function Dashboard({
         <select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select value={minimumScore} onChange={(e) => setMinimumScore(e.target.value)}><option value="0">Any score</option><option value="90">90+</option><option value="75">75+</option><option value="60">60+</option></select>
         <select value={type} onChange={(e) => setType(e.target.value)}><option value="all">All post types</option>{types.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | Story["status"])} aria-label="Filter by status"><option value="all">All statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option></select>
         <select value={dateSort} onChange={(e) => setDateSort(e.target.value as "newest" | "oldest")} aria-label="Sort by date added"><option value="newest">Date added: Newest first</option><option value="oldest">Date added: Oldest first</option></select>
       </div>
       <div className="story-table">
@@ -475,6 +497,47 @@ function Dashboard({
       </div>
     </section>
   );
+}
+
+function ArticleList({
+  items,
+  statusFilter,
+  setStatusFilter,
+  select,
+}: {
+  items: Story[];
+  statusFilter: "all" | Story["status"];
+  setStatusFilter: (value: "all" | Story["status"]) => void;
+  select: (id: string) => void;
+}) {
+  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Archived"];
+  const shown = items.filter((item) => statusFilter === "all" || item.status === statusFilter);
+  const groups = Array.from(shown.reduce((all, item) => {
+    const group = all.get(item.status) ?? [];
+    group.push(item);
+    all.set(item.status, group);
+    return all;
+  }, new Map<Story["status"], Story[]>()),).sort(([a], [b]) => statusOrder.indexOf(a) - statusOrder.indexOf(b));
+  return <section>
+    <header className="page-header">
+      <div><h1>Article Detail</h1><p>Browse your articles and open any title for its complete content and generation details.</p></div>
+    </header>
+    <div className="filter-row article-list-filter">
+      <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | Story["status"])} aria-label="Filter articles by status">
+        <option value="all">All statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Archived</option>
+      </select>
+    </div>
+    <div className="article-list">
+      {!shown.length && <div className="empty-queue"><FiFileText /><h2>No matching articles</h2><p>Try a different status filter.</p></div>}
+      {groups.map(([status, stories]) => <section className="article-status-group" key={status}>
+        <header><h2>{status}</h2><span>{stories.length} {stories.length === 1 ? "article" : "articles"}</span></header>
+        <div className="article-list-grid">{stories.map((item) => <article className="article-list-card" key={item.id}>
+          <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span></div>
+          <div className="article-thumbnail">{item.featuredImage ? <img src={item.featuredImage} alt={`First generated image for ${item.title}`} /> : <span>No image yet</span>}</div>
+        </article>)}</div>
+      </section>)}
+    </div>
+  </section>;
 }
 
 function formatAddedDate(value: string | null) {
