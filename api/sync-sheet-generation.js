@@ -147,10 +147,15 @@ export default async function handler(req, res) {
       const caption = String(row[10] || "");
       const hashtags = String(row[11] || "").split(/[\s,]+/).filter(Boolean);
       const currentImages = Array.isArray(concept.image_summary?.sheet_images) ? concept.image_summary.sheet_images : [];
+      const importedImageCount = Number(concept.image_summary?.imported_image_count || 0);
       const alreadySynced = article.status === "generated"
         && JSON.stringify(currentImages) === JSON.stringify(images)
         && String(concept.caption || "") === caption
-        && JSON.stringify(concept.hashtags || []) === JSON.stringify(hashtags);
+        && JSON.stringify(concept.hashtags || []) === JSON.stringify(hashtags)
+        // A prior Drive permission or availability failure must not permanently
+        // suppress image imports. Refresh keeps retrying until every sheet image
+        // has a durable copy in app storage.
+        && (!sourceImages.length || importedImageCount >= sourceImages.length);
       if (alreadySynced) continue;
       // Save the Generated status and all visible content first. Image import is best-effort
       // so a Drive permission delay never prevents the dashboard from updating.

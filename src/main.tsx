@@ -42,6 +42,7 @@ type Story = {
   generationIdentifier?: string | null;
   generationSheetRow?: number | null;
   featuredImage?: string | null;
+  featuredImageFallback?: string | null;
 };
 type Concept = { id?: string; summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[]; assets?: Array<{ storage_path: string; sequence: number }> };
 type TrendingTopic = { title: string; platform: string; summary: string; suggested_content: string; source_url?: string };
@@ -87,6 +88,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     score: row.rank ?? 0,
     type: postConcept?.post_type ?? "carousel",
     featuredImage: featuredImageOverride || embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
+    featuredImageFallback: sheetImage ? directImageFallback(sheetImage) : null,
     status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : row.status === "posted" ? "Posted" : "New") as Story["status"],
   };
 }
@@ -678,11 +680,28 @@ function ArticleList({
         <header><h2>{status}</h2><span>{stories.length} {stories.length === 1 ? "article" : "articles"}</span></header>
         <div className="article-list-grid">{stories.map((item) => <article className="article-list-card" key={item.id}>
           <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span></div>
-          <div className="article-thumbnail">{item.featuredImage ? <img src={item.featuredImage} alt={`First generated image for ${item.title}`} referrerPolicy="no-referrer" /> : <span>No image yet</span>}</div>
+          <ArticleThumbnail item={item} />
         </article>)}</div>
       </section>)}
     </div>
   </section>;
+}
+
+function ArticleThumbnail({ item }: { item: Story }) {
+  const candidates = Array.from(new Set([item.featuredImage, item.featuredImageFallback].filter(Boolean))) as string[];
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  useEffect(() => setCandidateIndex(0), [item.id, item.featuredImage, item.featuredImageFallback]);
+  const source = candidates[candidateIndex];
+  return <div className="article-thumbnail">
+    {source
+      ? <img
+          src={source}
+          alt={`First generated image for ${item.title}`}
+          referrerPolicy="no-referrer"
+          onError={() => setCandidateIndex((index) => index + 1)}
+        />
+      : <span>No image yet</span>}
+  </div>;
 }
 
 function formatAddedDate(value: string | null) {
