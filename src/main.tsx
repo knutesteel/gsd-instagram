@@ -260,7 +260,7 @@ function App() {
     return result as { updatedRange?: string };
   };
   const syncGeneratedContent = async () => {
-    if (!supabase || syncingGeneratedContent.current) return { updatedArticleIds: [], statuses: {} };
+    if (!supabase || syncingGeneratedContent.current) return { updatedArticleIds: [], statuses: {}, imagesByArticleId: {} };
     syncingGeneratedContent.current = true;
     try {
     const { data } = await supabase.auth.getSession(); if (!data.session) return;
@@ -268,7 +268,26 @@ function App() {
     const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Couldn’t sync generated content.");
     const ids: string[] = result.updatedArticleIds ?? [];
     await loadStories();
-    if (selected && ids.includes(selected)) await loadConcept(selected);
+    const imagesByArticleId = (result.imagesByArticleId ?? {}) as Record<string, string[]>;
+    // The sheet is the source of truth for generated media. Apply its current
+    // links directly after loading database rows so an earlier incomplete sync
+    // cannot leave the dashboard saying "No image yet."
+    setItems((current) => current.map((item) => {
+      const firstSheetImage = imagesByArticleId[item.id]?.find(Boolean);
+      return firstSheetImage ? {
+        ...item,
+        featuredImage: displayImageUrl(firstSheetImage),
+        featuredImageFallback: directImageFallback(firstSheetImage),
+      } : item;
+    }));
+    if (selected && (ids.includes(selected) || imagesByArticleId[selected]?.length)) {
+      await loadConcept(selected);
+      const selectedImages = imagesByArticleId[selected]?.filter(Boolean) ?? [];
+      if (selectedImages.length) setConcept((current) => current ? {
+        ...current,
+        image_summary: { ...(current.image_summary ?? {}), sheet_images: selectedImages },
+      } : current);
+    }
     return result;
     } finally {
       syncingGeneratedContent.current = false;
