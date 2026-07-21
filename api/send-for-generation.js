@@ -30,7 +30,12 @@ const typeLabel = (postType) => {
   const names = { carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" };
   return names[postType] || postType || "Carousel";
 };
-const createIdentifier = () => Array.from({ length: 6 }, () => "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[Math.floor(Math.random() * 26)]).join("");
+async function nextSequentialIdentifier(accessToken) {
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!response.ok) throw new Error("Couldn’t determine the next sheet identifier.");
+  const current = ((await response.json()).values ?? []).slice(1).map((row) => Number(String(row[0]).trim())).filter(Number.isFinite);
+  return String((current.length ? Math.max(...current) : 0) + 1);
+}
 const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nPanel 1 must directly introduce the article and show Hank reading a physical newspaper whose visible front-page headline is exactly: “${title}”. The squirrel responds to the headline. For Panels 2 onward, let Hank and the squirrel have a natural, funny conversation inspired by the article’s theme or humane takeaway. Do not mechanically restate the article or force its setting and props into every later panel; a natural setting change and conversational tangent are welcome. Keep both characters present and speaking in every panel, with the last panel landing a warm, practical thought. Use the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
 
 async function copyPromptFromPreviousRow(accessToken, destinationRow) {
@@ -48,18 +53,16 @@ async function copyPromptFromPreviousRow(accessToken, destinationRow) {
   if (!response.ok) throw new Error("Couldn’t copy the Prompt from the previous Google Sheets row.");
 }
 
-async function formatAddedRow(accessToken, rowNumber) {
-  if (!rowNumber) return;
+async function formatAndSortSheet(accessToken) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
     method: "POST",
     headers: { ...json, Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ requests: [{ repeatCell: {
-      range: { sheetId: 0, startRowIndex: rowNumber - 1, endRowIndex: rowNumber },
-      cell: { userEnteredFormat: { verticalAlignment: "TOP", wrapStrategy: "WRAP" } },
-      fields: "userEnteredFormat(verticalAlignment,wrapStrategy)",
-    } }] }),
+    body: JSON.stringify({ requests: [
+      { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endColumnIndex: 17 }, cell: { userEnteredFormat: { horizontalAlignment: "LEFT", verticalAlignment: "TOP", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy)" } },
+      { sortRange: { range: { sheetId: 0, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 17 }, sortSpecs: [{ dimensionIndex: 3, sortOrder: "DESCENDING" }] } },
+    ] }),
   });
-  if (!response.ok) throw new Error("Couldn’t format the new Google Sheets row.");
+  if (!response.ok) throw new Error("Couldn’t format and sort the Google Sheet.");
 }
 
 export default async function handler(req, res) {
@@ -85,7 +88,7 @@ export default async function handler(req, res) {
   try {
     const accessToken = await googleAccessToken();
     const content = concept.image_summary.content;
-    const identifier = article.generation_identifier || createIdentifier();
+    const identifier = /^\d+$/.test(String(article.generation_identifier || "")) ? String(article.generation_identifier) : await nextSequentialIdentifier(accessToken);
     const url = article.source_url || article.canonical_url || "";
     const type = typeLabel(concept.post_type);
     const values = [[
@@ -111,11 +114,14 @@ export default async function handler(req, res) {
     const result = await response.json();
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
     await copyPromptFromPreviousRow(accessToken, destinationRow);
-    await formatAddedRow(accessToken, destinationRow);
+    await formatAndSortSheet(accessToken);
+    const locator = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const identifierRows = locator.ok ? (await locator.json()).values ?? [] : [];
+    const sortedRow = identifierRows.findIndex((row) => String(row[0] || "").trim() === identifier) + 1;
     const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
       headers: { ...auth, ...json, Prefer: "return=minimal" },
-      body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: destinationRow }),
+      body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sortedRow || destinationRow }),
     });
     if (!rowUpdate.ok) throw new Error("Couldn’t save the Google Sheets row reference.");
     return res.status(200).json({ updatedRange: result.updates?.updatedRange, sheetRow: destinationRow });
