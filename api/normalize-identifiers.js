@@ -56,7 +56,7 @@ export default async function handler(req, res) {
     // Identifiers are assigned once, when a record is first sent.  Never derive
     // them from article order: sorting, archiving, and delayed sheet writes would
     // otherwise renumber records independently in the app and Sheet.
-    const numericIds = dataRows.map((row) => Number(String(row[3] || "").trim())).filter(Number.isFinite);
+    const numericIds = dataRows.map((row) => Number(String(row[3] || "").trim())).filter((value) => Number.isInteger(value) && value > 0);
     let nextId = numericIds.length ? Math.max(...numericIds) + 1 : 1;
     const uniqueByTitle = new Map();
     const titleCounts = new Map();
@@ -70,14 +70,17 @@ export default async function handler(req, res) {
     }
     const desiredId = new Map();
     const matchedArticleIds = new Set();
-    const updates = [];
     dataRows.forEach((row, index) => {
-      // Match content first.  The Sheet's identifier is authoritative for an
-      // existing row, even if an earlier app release stored a different number.
+      // Match content first. The app database is authoritative for an existing
+      // article; sorting a sheet must never silently reassign its identifier.
       const article = uniqueByTitle.get(titleKey(row[2]));
       if (!article) return;
       matchedArticleIds.add(article.id);
-      desiredId.set(article.id, String(row[3] || "").trim());
+      const stored = String(article.generation_identifier || "").trim();
+      const sheetValue = String(row[3] || "").trim();
+      if (/^\d+$/.test(stored)) desiredId.set(article.id, stored);
+      else if (/^\d+$/.test(sheetValue)) desiredId.set(article.id, sheetValue);
+      else desiredId.set(article.id, String(nextId++));
     });
     // A previous send can have marked an item Sent to Sheets after a transient append failure.
     // Repair those rows here, matching by title as well as identifier so each article is restored once.
@@ -90,6 +93,24 @@ export default async function handler(req, res) {
       if (!append.ok) throw new Error(`Couldn’t restore #${identifier} to the Google Sheet.`);
       const row = Number(String((await append.json()).updates?.updatedRange || "").match(/!A(\d+):/i)?.[1]);
       await copyPromptFromPreviousRow(accessToken, row);
+    }
+    // Bring the existing sheet cells into line with their app records before
+    // sorting. This is deliberately identifier-only: it preserves all content
+    // authored in the sheet while fixing an ID drift.
+    const sheetIdUpdates = [];
+    dataRows.forEach((row, index) => {
+      const article = uniqueByTitle.get(titleKey(row[2]));
+      const identifier = article && desiredId.get(article.id);
+      if (identifier && String(row[3] || "").trim() !== identifier) {
+        sheetIdUpdates.push({ range: `Sheet1!D${index + 2}`, values: [[identifier]] });
+      }
+    });
+    if (sheetIdUpdates.length) {
+      const updateIds = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
+        method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ valueInputOption: "USER_ENTERED", data: sheetIdUpdates }),
+      });
+      if (!updateIds.ok) throw new Error("Couldn’t synchronize identifiers in the Google Sheet.");
     }
     const appChanges = articles.filter((article) => desiredId.has(article.id) && String(article.generation_identifier || "") !== desiredId.get(article.id));
     await Promise.all(appChanges.map((article) => fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_identifier: desiredId.get(article.id) }) })));
@@ -107,6 +128,6 @@ export default async function handler(req, res) {
       const sheetRow = identifiers.findIndex((row) => String(row[0] || "").trim() === identifier) + 1;
       return fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sheetRow || null }) });
     }));
-    return res.status(200).json({ normalized: articles.length, restoredIdentifiers: missingSent.map((article) => desiredId.get(article.id)), changed: Boolean(missingSent.length || appChanges.length) });
+    return res.status(200).json({ normalized: articles.length, restoredIdentifiers: missingSent.map((article) => desiredId.get(article.id)), changed: Boolean(missingSent.length || appChanges.length || sheetIdUpdates.length) });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t normalize identifiers." }); }
 }
