@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   FiArchive,
@@ -43,7 +43,7 @@ type Story = {
   generationSheetRow?: number | null;
   featuredImage?: string | null;
 };
-type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
+type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[]; assets?: Array<{ storage_path: string; sequence: number }> };
 type TrendingTopic = { title: string; platform: string; summary: string; suggested_content: string; source_url?: string };
 
 const APP_VERSION = __APP_VERSION__;
@@ -60,13 +60,25 @@ function App() {
   const [toast, setToast] = useState("");
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [userId, setUserId] = useState<string | null>(null);
+  const normalizingIdentifiers = useRef(false);
   const active = items.find((i) => i.id === selected) ?? items[0];
   const proposed = items.filter((i) => i.status !== "Archived");
   const detailNavigationItems = items.filter((item) => item.status !== "Archived" && (articleStatusFilter === "all" || item.status === articleStatusFilter));
+  const hydrateConceptImages = async (data: any): Promise<Concept | null> => {
+    if (!data) return null;
+    const assets = (data.assets ?? []).filter((asset: any) => asset?.storage_path).sort((a: any, b: any) => a.sequence - b.sequence);
+    const client = supabase;
+    if (!assets.length || !client) return data as Concept;
+    const signed = await Promise.all(assets.map(async (asset: any) => {
+      const { data: link } = await client.storage.from("post-assets").createSignedUrl(asset.storage_path, 60 * 60);
+      return link?.signedUrl;
+    }));
+    return { ...data, image_summary: { ...(data.image_summary ?? {}), rendered_images: signed.filter(Boolean) } } as Concept;
+  };
   const loadConcept = async (articleId: string) => {
     if (!supabase || !articleId) return;
-    const { data } = await supabase.from("post_concepts").select("summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags").eq("article_id", articleId).maybeSingle();
-    setConcept(data as Concept | null);
+    const { data } = await supabase.from("post_concepts").select("summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags,assets(storage_path,sequence)").eq("article_id", articleId).maybeSingle();
+    setConcept(await hydrateConceptImages(data));
   };
   const notify = (message: string) => {
     setToast(message);
@@ -94,6 +106,28 @@ function App() {
     });
   }, [userId]);
   useEffect(() => { void loadConcept(selected); }, [selected]);
+  useEffect(() => {
+    if (!supabase || !userId || normalizingIdentifiers.current) return;
+    const client = supabase;
+    normalizingIdentifiers.current = true;
+    void client.auth.getSession().then(async ({ data }) => {
+      if (!data.session) return;
+      const response = await fetch("/api/normalize-identifiers", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}` } });
+      if (!response.ok) {
+        notify("Existing identifiers could not be normalized yet.");
+        return;
+      }
+      const result = await response.json();
+      if (result.changed) {
+        notify("Identifiers were synchronized to one sequential sequence.");
+        const { data: rows } = await client.from("articles").select("id,generation_identifier,generation_sheet_row").eq("user_id", userId);
+        if (rows) setItems((current) => current.map((item) => {
+          const refreshed = rows.find((row: any) => row.id === item.id);
+          return refreshed ? { ...item, generationIdentifier: refreshed.generation_identifier, generationSheetRow: refreshed.generation_sheet_row } : item;
+        }));
+      }
+    });
+  }, [userId]);
   const updateStatus = async (id: string, status: "discarded" | "new" | "sent_to_sheets" | "generated" | "approved_to_post") => {
     if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
@@ -188,7 +222,7 @@ function App() {
           {(
             [
               { key: "dashboard", icon: <FiGrid />, label: "Dashboard" },
-              { key: "articles", icon: <FiFileText />, label: "Article Detail" },
+              { key: "articles", icon: <FiFileText />, label: "Generation Details" },
               { key: "discover", icon: <FiCompass />, label: "Discover" },
               { key: "archive", icon: <FiArchive />, label: "Archive" },
             ] as const
@@ -223,6 +257,7 @@ function App() {
             items={proposed}
             discover={() => setScreen("discover")}
             select={(id) => {
+              setArticleStatusFilter("all");
               setSelected(id);
               void loadConcept(id);
               setScreen("detail");
@@ -239,7 +274,7 @@ function App() {
             items={items}
             statusFilter={articleStatusFilter}
             setStatusFilter={setArticleStatusFilter}
-            select={(id) => { setSelected(id); void loadConcept(id); setScreen("detail"); }}
+            select={(id) => { setArticleStatusFilter("all"); setSelected(id); void loadConcept(id); setScreen("detail"); }}
           />
         )}
         {screen === "discover" && (
@@ -514,8 +549,8 @@ function ArticleList({
   setStatusFilter: (value: "all" | Story["status"]) => void;
   select: (id: string) => void;
 }) {
-  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Archived"];
-  const shown = items.filter((item) => statusFilter === "all" || item.status === statusFilter);
+  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved"];
+  const shown = items.filter((item) => item.status !== "Archived" && (statusFilter === "all" || item.status === statusFilter));
   const groups = Array.from(shown.reduce((all, item) => {
     const group = all.get(item.status) ?? [];
     group.push(item);
@@ -528,7 +563,7 @@ function ArticleList({
     </header>
     <div className="filter-row article-list-filter">
       <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | Story["status"])} aria-label="Filter articles by status">
-        <option value="all">All statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Archived</option>
+        <option value="all">All active statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option>
       </select>
     </div>
     <div className="article-list">
@@ -595,8 +630,9 @@ function Discover({
   research: (payload: Record<string, unknown>) => Promise<{ count: number; articleIds?: string[] }>;
   onManualComplete: (id: string) => void;
 }) {
-  const [mode, setMode] = useState<"system" | "manual">("system");
+  const [mode, setMode] = useState<"system" | "manual" | "overview">("system");
   const [manualUrl, setManualUrl] = useState("");
+  const [overview, setOverview] = useState("");
   const [searchText, setSearchText] = useState("");
   const [topicInput, setTopicInput] = useState("");
   const [topics, setTopics] = useState(["Attention & Brain", "Animal Behavior", "Weird Human News", "Productivity Tips", "Science & Space"]);
@@ -604,7 +640,22 @@ function Discover({
   const [trends, setTrends] = useState<TrendingTopic[]>([]);
   const [trendsLoading, setTrendsLoading] = useState(true);
   const [trendsError, setTrendsError] = useState("");
+  const trendsCacheKey = "gsd-trending-now-v1";
+  const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   const loadTrends = async () => {
+    // Trends are intentionally fetched once per calendar day.  Navigating away
+    // from Discover or reloading the app uses the saved daily result instead.
+    const cached = window.localStorage.getItem(trendsCacheKey);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed.date === today() && Array.isArray(parsed.topics) && parsed.topics.length) {
+          setTrends(parsed.topics);
+          setTrendsLoading(false);
+          return;
+        }
+      } catch { window.localStorage.removeItem(trendsCacheKey); }
+    }
     setTrendsLoading(true);
     setTrendsError("");
     try {
@@ -614,7 +665,9 @@ function Discover({
       const response = await fetch("/api/trending", { headers: { Authorization: `Bearer ${token}` } });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not load current trends.");
-      setTrends(body.topics ?? []);
+      const topics = body.topics ?? [];
+      setTrends(topics);
+      window.localStorage.setItem(trendsCacheKey, JSON.stringify({ date: today(), topics }));
     } catch (error) {
       setTrendsError(error instanceof Error ? error.message : "Could not load current trends.");
     } finally {
@@ -625,13 +678,14 @@ function Discover({
   const addTopic = () => { const value = topicInput.trim(); if (value && !topics.includes(value)) setTopics([...topics, value]); setTopicInput(""); };
   const run = async () => {
     if (mode === "manual" && !/^https?:\/\//i.test(manualUrl.trim())) return notify("Paste a complete article URL, starting with https://.");
+    if (mode === "overview" && !overview.trim()) return notify("Add a text overview to generate a suggested post.");
     if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search phrase or at least one topic.");
     setSearching(true);
     try {
-      const result = await research({ mode, manualUrl: manualUrl.trim(), searchText: searchText.trim(), topics });
-      setQueued(mode === "manual" ? ["Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
+      const result = await research({ mode, manualUrl: manualUrl.trim(), overview: overview.trim(), searchText: searchText.trim(), topics });
+      setQueued(mode === "manual" || mode === "overview" ? [mode === "overview" ? "Overview interpreted" : "Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
       notify(`${result.count} ${result.count === 1 ? "story" : "stories"} added to your dashboard.`);
-      if (mode === "manual" && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
+      if ((mode === "manual" || mode === "overview") && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
     } catch (error) { notify(error instanceof Error ? error.message : "Research failed."); }
     finally { setSearching(false); }
   };
@@ -650,9 +704,10 @@ function Discover({
         <div className="panel search-panel">
           <div className="segmented">
             <button className={mode === "manual" ? "selected" : ""} onClick={() => setMode("manual")}>Manual URL</button>
+            <button className={mode === "overview" ? "selected" : ""} onClick={() => setMode("overview")}>Text overview</button>
             <button className={mode === "system" ? "selected" : ""} onClick={() => setMode("system")}>System Search</button>
           </div>
-          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : <><Field label="What should we search for?"><input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="e.g. surprising focus research or clever animal behavior" /></Field>
+          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <Field label="What should Hank and the squirrel comment on?"><textarea value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field> : <><Field label="What should we search for?"><input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="e.g. surprising focus research or clever animal behavior" /></Field>
           <p className="field-label">Topics</p>
           <div className="chips">
             {topics.map((topic) => <span key={topic}>{topic} <button aria-label={`Remove ${topic}`} onClick={() => setTopics(topics.filter((item) => item !== topic))}><FiX /></button></span>)}
@@ -672,8 +727,7 @@ function Discover({
         </div>
         <aside className="panel trending-panel">
           <div className="trending-header">
-            <div><h2>Trending now</h2><p>Fresh social conversations, selected for GSD-friendly storytelling.</p></div>
-            <button className="icon-button" aria-label="Refresh current trends" title="Refresh current trends" onClick={() => void loadTrends()} disabled={trendsLoading}><FiRefreshCw className={trendsLoading ? "spin" : ""} /></button>
+            <div><h2>Trending now</h2><p>Fresh social conversations, selected for GSD-friendly storytelling. Updated daily.</p></div>
           </div>
           {trendsLoading && <p className="trending-status">Finding current conversations…</p>}
           {trendsError && <p className="trending-status">{trendsError}</p>}
@@ -757,7 +811,12 @@ function Detail({
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
   const [busy, setBusy] = useState("");
   const [activeImage, setActiveImage] = useState(0);
-  const images = Array.isArray(concept?.image_summary?.sheet_images) ? concept.image_summary.sheet_images.filter(Boolean) as string[] : [];
+  // Prefer app-storage copies. If any cannot be signed, retain the Drive image
+  // URLs as a fallback instead of rendering an empty gallery.
+  const renderedImages = Array.isArray(concept?.image_summary?.rendered_images) ? concept.image_summary.rendered_images.filter(Boolean) : [];
+  const sheetImages = Array.isArray(concept?.image_summary?.sheet_images) ? concept.image_summary.sheet_images.filter(Boolean) : [];
+  const images = (renderedImages.length ? renderedImages : sheetImages) as string[];
+  const fallbackImage = (index: number) => sheetImages[index] || "";
   const lockedAfterSheetSend = ["Sent to Sheets", "Generated", "Approved"].includes(story.status);
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
@@ -791,9 +850,9 @@ function Detail({
         <div className="left-fields detail-editor-fields">
           <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
           <Field label="Article Summary"><textarea className="summary-editor" value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder="A two-to-three sentence article summary" /></Field>
-          <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
-          <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Carousel</option><option value="single_image">Single Image</option><option value="multi_pane_cartoon">Multi-pane Cartoon</option><option value="reel">Reel</option></select></Field>
-          <div className="detail-number-row">
+          <div className="detail-metadata-row">
+            <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} /></Field>
+            <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Carousel</option><option value="single_image">Single Image</option><option value="multi_pane_cartoon">Multi-pane Cartoon</option><option value="reel">Reel</option></select></Field>
             <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
             <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
           </div>
@@ -806,13 +865,19 @@ function Detail({
         {images.length > 0 ? <div className="detail-generated-content">
           <div className="detail-asset-gallery">
             <div className="detail-asset-stage">
-              <img src={images[activeImage]} alt={`Generated panel ${activeImage + 1}`} />
+              <img src={images[activeImage]} alt={`Generated panel ${activeImage + 1}`} onError={(event) => {
+                const fallback = fallbackImage(activeImage);
+                if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+              }} />
               {images.length > 1 && <>
                 <button className="asset-arrow previous" aria-label="Previous image" onClick={() => setActiveImage((index) => (index - 1 + images.length) % images.length)}><FiArrowLeft /></button>
                 <button className="asset-arrow next" aria-label="Next image" onClick={() => setActiveImage((index) => (index + 1) % images.length)}><FiArrowRight /></button>
               </>}
             </div>
-            {images.length > 1 && <div className="detail-asset-thumbnails">{images.map((url, index) => <button key={url} className={index === activeImage ? "active" : ""} aria-label={`Show panel ${index + 1}`} onClick={() => setActiveImage(index)}><img src={url} alt={`Panel ${index + 1}`} /></button>)}</div>}
+            {images.length > 1 && <div className="detail-asset-thumbnails">{images.map((url, index) => <button key={url} className={index === activeImage ? "active" : ""} aria-label={`Show panel ${index + 1}`} onClick={() => setActiveImage(index)}><img src={url} alt={`Panel ${index + 1}`} onError={(event) => {
+              const fallback = fallbackImage(index);
+              if (fallback && event.currentTarget.src !== fallback) event.currentTarget.src = fallback;
+            }} /></button>)}</div>}
           </div>
           <div className="generated-post-copy"><b>Post Comment</b><p>{values.caption || "No post comment provided."}</p><b>Hashtags</b><p>{values.hashtags || "No hashtags provided."}</p></div>
         </div> : <>
