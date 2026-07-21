@@ -209,7 +209,7 @@
 
 .trending-panel {
   padding: 22px;
-  max-height: 700px;
+  max-height: 760px;
   overflow: auto;
 }
 .trending-header {
@@ -220,33 +220,42 @@
   padding-bottom: 14px;
   border-bottom: 1px solid #e4ded3;
 }
-.trending-header h2 { margin: 0; font-family: "Playfair Display", serif; font-size: 26px; }
-.trending-header p { margin: 5px 0 0; color: #625f57; font-size: .9rem; line-height: 1.4; }
-.trending-status { margin: 22px 0 0; color: #625f57; }
+.trending-header h2 { margin: 0; font-family: "Playfair Display", serif; font-size: 29px; }
+.trending-header p { margin: 5px 0 0; color: #625f57; font-size: 1rem; line-height: 1.45; }
+.trending-status { margin: 22px 0 0; color: #625f57; font-size: 1rem; }
 .trending-list { display: grid; gap: 0; }
 .trending-item {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  gap: 10px;
-  padding: 15px 0;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  padding: 18px 0;
   border-bottom: 1px solid #e8e2d7;
 }
 .trending-item:last-child { border-bottom: 0; }
 .trending-number {
   display: grid;
   place-items: center;
-  width: 25px;
-  height: 25px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
   color: #fff;
   background: #263c2d;
-  font-size: .78rem;
+  font-size: .85rem;
   font-weight: 700;
 }
-.trending-item h3 { margin: 0 0 4px; font-size: .98rem; line-height: 1.25; }
-.trending-item p { margin: 0; color: #59564f; font-size: .87rem; line-height: 1.42; }
-.trending-item b { display: block; margin-top: 8px; font-size: .78rem; color: #263c2d; }
-.trending-item .trending-angle { margin-top: 2px; color: #34342f; }
+.trending-item-head { display: flex; align-items: flex-start; gap: 10px; }
+.trending-item-head a { min-width: 0; color: #27362a; text-decoration-color: #d15636; text-underline-offset: 3px; }
+.trending-item-head a:hover { color: #bd4b2e; }
+.trending-item h3 { margin: 0 0 5px; font-size: 1.15rem; line-height: 1.27; }
+.trending-platform { color: #706b62; font-size: .9em; font-weight: 500; }
+.trending-item p { margin: 0; color: #59564f; font-size: 1rem; line-height: 1.5; }
+.trending-item b { display: block; margin-top: 10px; font-size: .9rem; color: #263c2d; }
+.trending-item .trending-angle { margin-top: 3px; color: #34342f; }
+.trending-delete { flex: 0 0 auto; margin-left: auto; padding: 4px; color: #8b4533; border-radius: 6px; }
+.trending-delete:hover { background: #f6e5df; color: #b63d24; }
+
+/* Discover uses an even two-column split on desktop. */
+.discover-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 
 
 .page-actions { display: flex; flex-wrap: wrap; gap: 10px; }
