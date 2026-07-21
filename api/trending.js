@@ -31,18 +31,20 @@ export default async function handler(req, res) {
         items: {
           type: "object",
           additionalProperties: false,
-          required: ["title", "summary", "suggested_content"],
+          required: ["title", "platform", "summary", "suggested_content", "source_url"],
           properties: {
             title: { type: "string" },
+            platform: { type: "string" },
             summary: { type: "string" },
             suggested_content: { type: "string" },
+            source_url: { type: "string" },
           },
         },
       },
     },
   };
 
-  const prompt = `Use web search to identify ten of the biggest timely, high-engagement social-media conversations or trends in the United States right now. Favor trends visibly active across TikTok, Instagram, YouTube, Reddit, X, Google Trends, or major social reporting. Exclude politics, tragedy, crime, unsafe challenges, sexual content, celebrity gossip, and anything that is not appropriate for a warm all-ages brand. Do not invent metrics or claim an exact platform rank. Return exactly ten distinct topics. For each: a short title, a concise factual summary of why people are talking about it, and a practical, playful suggested Hank-and-the-squirrel content idea. The idea must make panel 1 directly connect to the topic; later panels can become a natural character conversation rather than repeating facts.`;
+  const prompt = `Use web search to identify ten of the biggest timely, high-engagement trends happening on social-media platforms in the United States right now. These must be platform-native trends such as a viral format, meme, challenge, sound, creator behavior, shared prompt, fandom moment, or distinctive conversation pattern—not news stories or reports about trends. Use only a trend that is visibly active on TikTok, Instagram, YouTube, Reddit, or X. For each trend, identify the single primary platform where it is currently most active. Exclude politics, tragedy, crime, unsafe challenges, sexual content, celebrity gossip, and anything that is not appropriate for a warm all-ages brand. Do not invent metrics or claim an exact platform rank. Return exactly ten distinct trends. For each: a short title, platform (use a single platform name), a concise factual summary of the platform-native trend, one direct clickable source_url to a current supporting page, and a broad suggested Hank-and-the-squirrel commentary angle. The suggested commentary must be a high-level premise or human observation, not a panel-by-panel layout, dialogue, scene list, or image-generation prompt.`;
 
   try {
     const aiResponse = await fetch("https://api.openai.com/v1/responses", {
