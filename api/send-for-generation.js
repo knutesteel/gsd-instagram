@@ -1,7 +1,9 @@
 import { createPrivateKey, sign } from "node:crypto";
 
 const json = { "Content-Type": "application/json" };
-const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
+// This workflow has one canonical destination. Do not allow a stale deployment
+// variable to silently redirect generation rows to a different spreadsheet.
+const spreadsheetId = "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
 
 async function googleAccessToken() {
@@ -72,6 +74,18 @@ async function sheetRowForIdentifier(accessToken, identifier) {
   const rows = (await response.json()).values ?? [];
   const index = rows.findIndex((row) => String(row[0] || "").trim() === String(identifier).trim());
   return index >= 0 ? index + 1 : null;
+}
+async function verifySheetRow(accessToken, identifier, title) {
+  const response = await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!C:D")}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    "Generation row verification",
+  );
+  if (!response.ok) throw new Error(await googleError(response, "Couldn’t verify the Google Sheets row"));
+  const rows = (await response.json()).values || [];
+  const index = rows.findIndex((row) => valueKey(row[0]) === valueKey(title) && String(row[1] || "").trim() === String(identifier).trim());
+  if (index < 0) throw new Error("Google Sheets did not contain the article after the write, so the send was not marked successful.");
+  return index + 1;
 }
 const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nCreate every output image at exactly 1080 pixels wide by 1440 pixels high (3:4 portrait), the default Instagram size. Panel 1 must directly introduce the article and show Hank reading a physical newspaper whose visible front-page headline is exactly: “${title}”. The squirrel responds to the headline. For Panels 2 onward, let Hank and the squirrel have a natural, funny conversation inspired by the article’s theme or humane takeaway. Do not mechanically restate the article or force its setting and props into every later panel; a natural setting change and conversational tangent are welcome. Keep both characters present and speaking in every panel, with the last panel landing a warm, practical thought. Use the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
 
@@ -175,7 +189,7 @@ export default async function handler(req, res) {
       });
       if (!update.ok) throw new Error(await googleError(update, "Couldn’t update the existing Google Sheets row"));
       await formatAndSortSheet(accessToken);
-      const sortedRow = await sheetRowForIdentifier(accessToken, identifier);
+      const sortedRow = await verifySheetRow(accessToken, identifier, article.title);
       if (!sortedRow) throw new Error("The updated article could not be found after sorting the Google Sheet.");
       const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
         method: "PATCH", headers: { ...auth, ...json, Prefer: "return=minimal" },
@@ -194,7 +208,7 @@ export default async function handler(req, res) {
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
     await copyPromptFromPreviousRow(accessToken, destinationRow);
     await formatAndSortSheet(accessToken);
-    const sortedRow = await sheetRowForIdentifier(accessToken, identifier);
+    const sortedRow = await verifySheetRow(accessToken, identifier, article.title);
     if (!sortedRow) throw new Error("The new article could not be found after sorting the Google Sheet.");
     const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
