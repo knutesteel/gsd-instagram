@@ -1061,11 +1061,6 @@ function Archive({
           <p>Kept out of your queue. Never shown again unless restored.</p>
         </div>
       </header>
-      <div className="metrics archive-metrics">
-        <Metric number={String(rows.length)} label="Discarded" icon={<FiTrash2 />} />
-        <Metric number="0" label="Low fit" icon={<FiArrowRight />} />
-        <Metric number="0" label="Duplicates" icon={<FiGrid />} />
-      </div>
       <div className="archive-layout">
         <div>
           <div className="filter-row">
