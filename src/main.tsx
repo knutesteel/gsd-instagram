@@ -114,7 +114,8 @@ function App() {
       if (!data.session) return;
       const response = await fetch("/api/normalize-identifiers", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}` } });
       if (!response.ok) {
-        notify("Existing identifiers could not be normalized yet.");
+        const failure = await response.json().catch(() => null);
+        notify(failure?.error || "Couldn’t synchronize identifiers. Please try again.");
         return;
       }
       const result = await response.json();
