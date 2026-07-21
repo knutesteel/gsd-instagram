@@ -47,6 +47,11 @@ type Story = {
 type Concept = { id?: string; summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[]; assets?: Array<{ storage_path: string; sequence: number }> };
 type TrendingTopic = { title: string; platform: string; summary: string; suggested_content: string; source_url?: string };
 
+function conceptFromArticle(row: any) {
+  const relation = row?.post_concepts;
+  return Array.isArray(relation) ? relation[0] : relation;
+}
+
 const APP_VERSION = __APP_VERSION__;
 const APP_LAST_UPDATED = __APP_UPDATED_AT__;
 
@@ -71,7 +76,7 @@ function directImageFallback(value: unknown) {
 }
 
 function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
-  const postConcept = row.post_concepts?.[0];
+  const postConcept = conceptFromArticle(row);
   const imageSummary = postConcept?.image_summary ?? {};
   const embeddedImage = Array.isArray(imageSummary.embedded_images) ? imageSummary.embedded_images.find(Boolean) : null;
   const sheetImage = Array.isArray(imageSummary.sheet_images) ? imageSummary.sheet_images.find(Boolean) : null;
@@ -127,7 +132,7 @@ function App() {
       .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
       .order("created_at", { ascending: false });
     if (error) throw new Error(`Couldn’t load your queue: ${error.message}`);
-    const conceptIds = (data ?? []).map((row: any) => row.post_concepts?.[0]?.id).filter(Boolean);
+    const conceptIds = (data ?? []).map((row: any) => conceptFromArticle(row)?.id).filter(Boolean);
     const firstAssetByConcept = new Map<string, string>();
     if (conceptIds.length) {
       const { data: assets } = await supabase
@@ -143,7 +148,7 @@ function App() {
       }
     }
     const saved: Story[] = (data ?? []).map((row: any) => {
-      const conceptId = row.post_concepts?.[0]?.id;
+      const conceptId = conceptFromArticle(row)?.id;
       return storyFromRow(row, conceptId ? firstAssetByConcept.get(conceptId) : null);
     });
     setItems(saved);
