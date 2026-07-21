@@ -44,7 +44,7 @@ type Story = {
   featuredImage?: string | null;
 };
 type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
-type TrendingTopic = { title: string; summary: string; suggested_content: string };
+type TrendingTopic = { title: string; platform: string; summary: string; suggested_content: string; source_url?: string };
 
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
@@ -627,7 +627,7 @@ function Discover({
           <h1>Find fresh stories</h1>
           <p>
             Discover high-potential Instagram stories based on your topics and
-            research requirements.
+            current conversations worth a Hank-and-the-squirrel take.
           </p>
         </div>
       </header>
@@ -674,9 +674,12 @@ function Discover({
             {trends.map((trend, index) => <article className="trending-item" key={`${trend.title}-${index}`}>
               <span className="trending-number">{index + 1}</span>
               <div>
-                <h3>{trend.title}</h3>
+                <div className="trending-item-head">
+                  {trend.source_url ? <a href={trend.source_url} target="_blank" rel="noreferrer"><h3>{trend.title} <span className="trending-platform">({trend.platform})</span></h3></a> : <h3>{trend.title} <span className="trending-platform">({trend.platform})</span></h3>}
+                  <button className="trending-delete" aria-label={`Remove ${trend.title}`} title="Remove trend" onClick={() => setTrends((items) => items.filter((_, itemIndex) => itemIndex !== index))}><FiTrash2 /></button>
+                </div>
                 <p>{trend.summary}</p>
-                <b>Hank + squirrel</b>
+                <b>Suggested commentary</b>
                 <p className="trending-angle">{trend.suggested_content}</p>
               </div>
             </article>)}
