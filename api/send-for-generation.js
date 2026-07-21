@@ -52,10 +52,10 @@ async function nextSequentialIdentifier(accessToken, databaseIdentifiers = []) {
 }
 const valueKey = (value) => String(value || "").trim().toLocaleLowerCase();
 async function existingSheetRow(accessToken, article) {
-  // Only title, identifier, and URL are needed. Reading the full A:L range here
-  // made every send much heavier and more likely to hit the Sheets read quota.
+  // Use the same range and read shape as sync-sheet-generation. That endpoint
+  // is already proven against the production Sheet and service account.
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!C:E")}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
     "Existing generation row lookup",
   );
@@ -63,8 +63,8 @@ async function existingSheetRow(accessToken, article) {
   const rows = ((await response.json()).values || []).slice(1);
   const url = valueKey(article.source_url || article.canonical_url);
   const title = valueKey(article.title);
-  const index = rows.findIndex((row) => (url && valueKey(row[2]) === url) || (title && valueKey(row[0]) === title));
-  return index < 0 ? null : { row: index + 2, identifier: String(rows[index][1] || "").trim() };
+  const index = rows.findIndex((row) => (url && valueKey(row[4]) === url) || (title && valueKey(row[2]) === title));
+  return index < 0 ? null : { row: index + 2, identifier: String(rows[index][3] || "").trim() };
 }
 async function sheetRowForIdentifier(accessToken, identifier) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
