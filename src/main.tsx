@@ -69,7 +69,7 @@ function directImageFallback(value: unknown) {
   return fileId ? `https://lh3.googleusercontent.com/d/${fileId}=w2000` : url;
 }
 
-function storyFromRow(row: any): Story {
+function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
   const postConcept = row.post_concepts?.[0];
   const imageSummary = postConcept?.image_summary ?? {};
   const embeddedImage = Array.isArray(imageSummary.embedded_images) ? imageSummary.embedded_images.find(Boolean) : null;
@@ -86,7 +86,7 @@ function storyFromRow(row: any): Story {
     category: row.category ?? "Uncategorized",
     score: row.rank ?? 0,
     type: postConcept?.post_type ?? "carousel",
-    featuredImage: embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
+    featuredImage: featuredImageOverride || embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
     status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"],
   };
 }
@@ -122,10 +122,28 @@ function App() {
     if (!supabase) return [] as Story[];
     const { data, error } = await supabase
       .from("articles")
-      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)")
+      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
       .order("created_at", { ascending: false });
     if (error) throw new Error(`Couldn’t load your queue: ${error.message}`);
-    const saved: Story[] = (data ?? []).map(storyFromRow);
+    const conceptIds = (data ?? []).map((row: any) => row.post_concepts?.[0]?.id).filter(Boolean);
+    const firstAssetByConcept = new Map<string, string>();
+    if (conceptIds.length) {
+      const { data: assets } = await supabase
+        .from("assets")
+        .select("concept_id,storage_path,sequence")
+        .in("concept_id", conceptIds)
+        .eq("is_active", true)
+        .order("sequence", { ascending: true });
+      for (const asset of assets ?? []) {
+        if (!asset.storage_path || firstAssetByConcept.has(asset.concept_id)) continue;
+        const { data: link } = await supabase.storage.from("post-assets").createSignedUrl(asset.storage_path, 60 * 60);
+        if (link?.signedUrl) firstAssetByConcept.set(asset.concept_id, link.signedUrl);
+      }
+    }
+    const saved: Story[] = (data ?? []).map((row: any) => {
+      const conceptId = row.post_concepts?.[0]?.id;
+      return storyFromRow(row, conceptId ? firstAssetByConcept.get(conceptId) : null);
+    });
     setItems(saved);
     setSelected((current) => current && saved.some((story) => story.id === current) ? current : saved[0]?.id ?? "");
     return saved;
