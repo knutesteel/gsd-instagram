@@ -31,6 +31,17 @@ const typeLabel = (postType) => {
   return names[postType] || postType || "Carousel";
 };
 const numericIdentifier = (value) => /^\d+$/.test(String(value || "").trim()) ? String(value).trim() : "";
+const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+async function googleFetch(url, options, operation) {
+  let response;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    response = await fetch(url, options);
+    if (response.ok || ![429, 500, 502, 503, 504].includes(response.status)) return response;
+    if (attempt < 2) await wait(250 * (2 ** attempt));
+  }
+  if (!response) throw new Error(`${operation} failed before Google Sheets responded.`);
+  return response;
+}
 async function nextSequentialIdentifier(accessToken, databaseIdentifiers = []) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!response.ok) throw new Error("Couldn’t determine the next sheet identifier.");
@@ -41,13 +52,19 @@ async function nextSequentialIdentifier(accessToken, databaseIdentifiers = []) {
 }
 const valueKey = (value) => String(value || "").trim().toLocaleLowerCase();
 async function existingSheetRow(accessToken, article) {
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
-  if (!response.ok) throw new Error("Couldn’t check the existing generation row.");
+  // Only title, identifier, and URL are needed. Reading the full A:L range here
+  // made every send much heavier and more likely to hit the Sheets read quota.
+  const response = await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!C:E")}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    "Existing generation row lookup",
+  );
+  if (!response.ok) throw new Error(await googleError(response, "Couldn’t check the existing generation row"));
   const rows = ((await response.json()).values || []).slice(1);
   const url = valueKey(article.source_url || article.canonical_url);
   const title = valueKey(article.title);
-  const index = rows.findIndex((row) => (url && valueKey(row[4]) === url) || (title && valueKey(row[2]) === title));
-  return index < 0 ? null : { row: index + 2, identifier: String(rows[index][3] || "").trim() };
+  const index = rows.findIndex((row) => (url && valueKey(row[2]) === url) || (title && valueKey(row[0]) === title));
+  return index < 0 ? null : { row: index + 2, identifier: String(rows[index][1] || "").trim() };
 }
 async function sheetRowForIdentifier(accessToken, identifier) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
