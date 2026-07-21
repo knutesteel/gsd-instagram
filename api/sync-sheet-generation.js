@@ -1,4 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
+import { extendSheetFilter } from "./sheet-filter.js";
 
 const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
@@ -89,6 +90,7 @@ async function restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers,
         body: JSON.stringify({ requests: [{ copyPaste: { source: { sheetId: 0, startRowIndex: rowNumber - 2, endRowIndex: rowNumber - 1, startColumnIndex: 9, endColumnIndex: 10 }, destination: { sheetId: 0, startRowIndex: rowNumber - 1, endRowIndex: rowNumber, startColumnIndex: 9, endColumnIndex: 10 }, pasteType: "PASTE_NORMAL", pasteOrientation: "NORMAL" } }] }),
       });
     }
+    await extendSheetFilter({ accessToken, spreadsheetId, lastRow: rowNumber });
     const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(userId)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_sheet_row: rowNumber }) });
     if (!rowUpdate.ok) throw new Error(`Couldn’t save the restored row for #${article.generation_identifier}.`);
     rows.push(values[0]);

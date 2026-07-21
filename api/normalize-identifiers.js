@@ -1,4 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
+import { extendSheetFilter } from "./sheet-filter.js";
 
 const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
@@ -102,6 +103,7 @@ export default async function handler(req, res) {
       if (!append.ok) throw new Error(`Couldn’t restore #${identifier} to the Google Sheet.`);
       const row = Number(String((await append.json()).updates?.updatedRange || "").match(/!A(\d+):/i)?.[1]);
       await copyPromptFromPreviousRow(accessToken, row);
+      await extendSheetFilter({ accessToken, spreadsheetId, lastRow: row });
     }
     // Bring the existing sheet cells into line with their app records before
     // sorting. This is deliberately identifier-only: it preserves all content

@@ -1,4 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
+import { extendSheetFilter } from "./sheet-filter.js";
 
 const json = { "Content-Type": "application/json" };
 // This workflow has one canonical destination. Do not allow a stale deployment
@@ -207,6 +208,7 @@ export default async function handler(req, res) {
     const result = await response.json();
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
     await copyPromptFromPreviousRow(accessToken, destinationRow);
+    await extendSheetFilter({ accessToken, spreadsheetId, lastRow: destinationRow });
     await formatAndSortSheet(accessToken);
     const sortedRow = await verifySheetRow(accessToken, identifier, article.title);
     if (!sortedRow) throw new Error("The new article could not be found after sorting the Google Sheet.");
