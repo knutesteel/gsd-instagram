@@ -46,6 +46,9 @@ type Story = {
 type Concept = { summary?: string; post_type?: string; panel_count?: number; image_summary?: Record<string, any>; detailed_prompt?: string; caption?: string; hashtags?: string[] };
 type TrendingTopic = { title: string; platform: string; summary: string; suggested_content: string; source_url?: string };
 
+const APP_VERSION = __APP_VERSION__;
+const APP_LAST_UPDATED = __APP_UPDATED_AT__;
+
 function App() {
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [items, setItems] = useState<Story[]>([]);
@@ -85,7 +88,7 @@ function App() {
     if (!supabase || !userId) return;
     supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)").order("created_at", { ascending: false }).then(({ data, error }) => {
       if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", featuredImage: Array.isArray(row.post_concepts?.[0]?.image_summary?.sheet_images) ? row.post_concepts[0].image_summary.sheet_images.find(Boolean) ?? null : null, status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
+      const saved: Story[] = (data ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", featuredImage: Array.isArray(row.post_concepts?.[0]?.image_summary?.sheet_images) ? row.post_concepts[0].image_summary.sheet_images.find(Boolean) ?? null : null, status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
       setItems(saved);
       if (saved[0]) setSelected(saved[0].id);
     });
@@ -166,7 +169,7 @@ function App() {
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
     await supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)").order("created_at", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "No summary saved yet.", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", featuredImage: Array.isArray(row.post_concepts?.[0]?.image_summary?.sheet_images) ? row.post_concepts[0].image_summary.sheet_images.find(Boolean) ?? null : null, status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
+      const saved: Story[] = (rows ?? []).map((row: any) => ({ id: row.id, title: row.title, createdAt: row.created_at ?? null, generationIdentifier: row.generation_identifier ?? null, generationSheetRow: row.generation_sheet_row ?? null, url: row.source_url ?? row.canonical_url ?? "", overview: row.post_concepts?.[0]?.summary ?? "", category: row.category ?? "Uncategorized", score: row.rank ?? 0, type: row.post_concepts?.[0]?.post_type ?? "carousel", featuredImage: Array.isArray(row.post_concepts?.[0]?.image_summary?.sheet_images) ? row.post_concepts[0].image_summary.sheet_images.find(Boolean) ?? null : null, status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"] }));
       setItems(saved); if (saved[0]) setSelected(saved[0].id);
     });
     return result as { count: number; articleIds?: string[] };
@@ -224,7 +227,7 @@ function App() {
               void loadConcept(id);
               setScreen("detail");
             }}
-            onStatus={(id, status) => void setArticleStatus(id, status).then(() => { notify(`Status changed to ${status} in the app and Google Sheet.`); if (status === "Archived") setScreen("archive"); }).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update the status."))}
+            onStatus={(id, status) => void setArticleStatus(id, status).then(() => notify(`Status changed to ${status} in the app and Google Sheet.`)).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update the status."))}
             approve={(id) => void setArticleStatus(id, "Approved").then(() => notify("Post approved in the app and Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t approve this post."))}
             refreshStatus={() => void syncGeneratedContent().then(() => notify("Status and generated content refreshed from the Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t refresh status."))}
             statusFilter={articleStatusFilter}
@@ -441,6 +444,7 @@ function Dashboard({
         <div>
           <h1>Your story queue</h1>
           <p>High-potential stories, ranked for the GSD audience.</p>
+          <p className="app-build-meta">Version {APP_VERSION} · Last updated {formatAppUpdated(APP_LAST_UPDATED)}</p>
         </div>
         <div className="page-actions">
           <button onClick={refreshStatus}><FiRefreshCw /> Refresh status</button>
@@ -547,6 +551,18 @@ function formatAddedDate(value: string | null) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
 }
 
+function formatAppUpdated(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function Metric({
   number,
   label,
@@ -583,7 +599,6 @@ function Discover({
   const [manualUrl, setManualUrl] = useState("");
   const [searchText, setSearchText] = useState("");
   const [topicInput, setTopicInput] = useState("");
-  const [timeframe, setTimeframe] = useState("48");
   const [topics, setTopics] = useState(["Attention & Brain", "Animal Behavior", "Weird Human News", "Productivity Tips", "Science & Space"]);
   const [queued, setQueued] = useState<string[]>([]);
   const [trends, setTrends] = useState<TrendingTopic[]>([]);
@@ -613,7 +628,7 @@ function Discover({
     if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search phrase or at least one topic.");
     setSearching(true);
     try {
-      const result = await research({ mode, manualUrl: manualUrl.trim(), searchText: searchText.trim(), topics, timeframe });
+      const result = await research({ mode, manualUrl: manualUrl.trim(), searchText: searchText.trim(), topics });
       setQueued(mode === "manual" ? ["Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
       notify(`${result.count} ${result.count === 1 ? "story" : "stories"} added to your dashboard.`);
       if (mode === "manual" && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
@@ -638,14 +653,6 @@ function Discover({
             <button className={mode === "system" ? "selected" : ""} onClick={() => setMode("system")}>System Search</button>
           </div>
           {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : <><Field label="What should we search for?"><input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="e.g. surprising focus research or clever animal behavior" /></Field>
-          <label className="field-label">
-            Timeframe
-            <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
-              <option value="48">Last 48 hours</option>
-              <option value="24">Last 24 hours</option>
-              <option value="anytime">Anytime</option>
-            </select>
-          </label>
           <p className="field-label">Topics</p>
           <div className="chips">
             {topics.map((topic) => <span key={topic}>{topic} <button aria-label={`Remove ${topic}`} onClick={() => setTopics(topics.filter((item) => item !== topic))}><FiX /></button></span>)}

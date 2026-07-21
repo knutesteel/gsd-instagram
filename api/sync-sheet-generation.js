@@ -10,6 +10,7 @@ const driveImageUrl = (url) => {
   return id ? `https://drive.google.com/thumbnail?id=${id}&sz=w1600` : url;
 };
 const extensionFor = (contentType) => contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
+const typeLabel = (postType) => ({ carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" }[postType] || postType || "Carousel");
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -43,6 +44,36 @@ async function importImage({ url, accessToken, supabaseUrl, headers, userId, con
   if (!upload.ok) return null;
   return { sequence, storage_path: storagePath, mime_type: contentType };
 }
+async function restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId }) {
+  const sheetIdentifiers = new Set(rows.slice(1).map((row) => String(row[3] || "").trim()).filter(Boolean));
+  const response = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(userId)}&status=eq.sent_to_sheets&select=id,title,generation_identifier,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
+  if (!response.ok) throw new Error("Couldn’t check Sent to Sheets items.");
+  const missing = (await response.json()).filter((article) => article.generation_identifier && !sheetIdentifiers.has(String(article.generation_identifier).trim()));
+  for (const article of missing) {
+    const concept = article.post_concepts?.[0];
+    if (!concept) continue;
+    const values = [[
+      new Date().toISOString().slice(0, 10), "Pending", article.title || "", article.generation_identifier,
+      article.source_url || article.canonical_url || "", concept.summary || "", concept.panel_count || 1,
+      typeLabel(concept.post_type), concept.image_summary?.content || "", "", concept.caption || "",
+      Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
+    ]];
+    const append = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+      method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ values }),
+    });
+    if (!append.ok) throw new Error(`Couldn’t restore ${article.generation_identifier} to the Google Sheet.`);
+    const result = await append.json();
+    const rowNumber = Number(String(result.updates?.updatedRange || "").match(/!A(\d+):/i)?.[1]);
+    if (rowNumber > 2) {
+      await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+        method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ requests: [{ copyPaste: { source: { sheetId: 0, startRowIndex: rowNumber - 2, endRowIndex: rowNumber - 1, startColumnIndex: 9, endColumnIndex: 10 }, destination: { sheetId: 0, startRowIndex: rowNumber - 1, endRowIndex: rowNumber, startColumnIndex: 9, endColumnIndex: 10 }, pasteType: "PASTE_NORMAL", pasteOrientation: "NORMAL" } }] }),
+      });
+    }
+    await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(userId)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_sheet_row: rowNumber }) });
+  }
+  return missing.map((article) => article.generation_identifier);
+}
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -56,8 +87,9 @@ export default async function handler(req, res) {
     const sheet = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!sheet.ok) throw new Error("Couldn’t read the generation sheet.");
     const rows = (await sheet.json()).values ?? [];
+    const restoredIdentifiers = await restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
     const syncedRows = rows.slice(1).filter((row) => ["generated", "approved"].includes(String(row[1]).trim().toLowerCase()) && row[3]);
-    if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {} });
+    if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {}, restoredIdentifiers });
     const updatedArticleIds = [];
     const statuses = {};
     for (const row of syncedRows) {
@@ -109,6 +141,6 @@ export default async function handler(req, res) {
       updatedArticleIds.push(article.id);
       statuses[article.id] = "Generated";
     }
-    return res.status(200).json({ updatedArticleIds, statuses });
+    return res.status(200).json({ updatedArticleIds, statuses, restoredIdentifiers });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
 }

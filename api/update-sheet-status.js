@@ -39,19 +39,36 @@ export default async function handler(req, res) {
   const user = await userResponse.json();
 
   try {
-    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,generation_sheet_row`, { headers });
+    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,generation_identifier,generation_sheet_row`, { headers });
     if (!articleResponse.ok) throw new Error("Couldn’t find the article.");
     const article = (await articleResponse.json())[0];
     if (!article) return res.status(404).json({ error: "Article not found." });
 
-    if (article.generation_sheet_row) {
+    let sheetRow = article.generation_sheet_row;
+    // Rows can move or be recreated after a sheet cleanup. Resolve by identifier
+    // before falling back to the saved row number so the wrong story is never updated.
+    if (article.generation_identifier) {
       const accessToken = await googleAccessToken();
-      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${article.generation_sheet_row}`)}?valueInputOption=USER_ENTERED`, {
+      const lookup = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!B:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+      if (!lookup.ok) throw new Error("Couldn’t find the article in the Google Sheet.");
+      const rows = (await lookup.json()).values ?? [];
+      const foundIndex = rows.findIndex((row) => String(row[2] || "").trim() === String(article.generation_identifier).trim());
+      if (foundIndex >= 0) sheetRow = foundIndex + 1;
+    }
+
+    if (sheetRow) {
+      const accessToken = await googleAccessToken();
+      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${sheetRow}`)}?valueInputOption=USER_ENTERED`, {
         method: "PUT",
         headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
         body: JSON.stringify({ values: [[target.sheet]] }),
       });
       if (!update.ok) throw new Error("Couldn’t update the status in the Google Sheet.");
+      if (sheetRow !== article.generation_sheet_row) {
+        await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+          method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_sheet_row: sheetRow }),
+        });
+      }
     }
 
     const statusUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
