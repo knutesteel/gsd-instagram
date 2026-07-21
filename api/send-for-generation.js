@@ -36,6 +36,16 @@ async function nextSequentialIdentifier(accessToken) {
   const current = ((await response.json()).values ?? []).slice(1).map((row) => Number(String(row[0]).trim())).filter(Number.isFinite);
   return String((current.length ? Math.max(...current) : 0) + 1);
 }
+const valueKey = (value) => String(value || "").trim().toLocaleLowerCase();
+async function existingSheetRow(accessToken, article) {
+  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!response.ok) throw new Error("Couldn’t check the existing generation row.");
+  const rows = ((await response.json()).values || []).slice(1);
+  const url = valueKey(article.source_url || article.canonical_url);
+  const title = valueKey(article.title);
+  const index = rows.findIndex((row) => (url && valueKey(row[4]) === url) || (title && valueKey(row[2]) === title));
+  return index < 0 ? null : { row: index + 2, identifier: String(rows[index][3] || "").trim() };
+}
 const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nPanel 1 must directly introduce the article and show Hank reading a physical newspaper whose visible front-page headline is exactly: “${title}”. The squirrel responds to the headline. For Panels 2 onward, let Hank and the squirrel have a natural, funny conversation inspired by the article’s theme or humane takeaway. Do not mechanically restate the article or force its setting and props into every later panel; a natural setting change and conversational tangent are welcome. Keep both characters present and speaking in every panel, with the last panel landing a warm, practical thought. Use the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
 
 async function copyPromptFromPreviousRow(accessToken, destinationRow) {
@@ -65,6 +75,18 @@ async function formatAndSortSheet(accessToken) {
   if (!response.ok) throw new Error("Couldn’t format and sort the Google Sheet.");
 }
 
+async function googleError(response, fallback) {
+  let detail = "";
+  try {
+    const body = await response.json();
+    detail = body?.error?.message || body?.error?.status || "";
+  } catch {
+    // The response body is not always JSON. The HTTP status still identifies
+    // the failed Google Sheets operation without exposing credentials.
+  }
+  return detail ? `${fallback} (${response.status}: ${detail})` : `${fallback} (${response.status}).`;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -88,7 +110,10 @@ export default async function handler(req, res) {
   try {
     const accessToken = await googleAccessToken();
     const content = concept.image_summary.content;
-    const identifier = /^\d+$/.test(String(article.generation_identifier || "")) ? String(article.generation_identifier) : await nextSequentialIdentifier(accessToken);
+    const existing = await existingSheetRow(accessToken, article);
+    // A matching Sheet row wins. This makes resend safe and self-corrects a
+    // stale app identifier instead of creating a second row or reusing a number.
+    const identifier = existing?.identifier || await nextSequentialIdentifier(accessToken);
     const url = article.source_url || article.canonical_url || "";
     const type = typeLabel(concept.post_type);
     const values = [[
@@ -105,12 +130,27 @@ export default async function handler(req, res) {
       concept.caption || "",
       Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
     ]];
+    if (existing) {
+      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${existing.row}:L${existing.row}`)}?valueInputOption=USER_ENTERED`, {
+        method: "PUT",
+        headers: { ...json, Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({ values }),
+      });
+      if (!update.ok) throw new Error(await googleError(update, "Couldn’t update the existing Google Sheets row"));
+      const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+        method: "PATCH", headers: { ...auth, ...json, Prefer: "return=minimal" },
+        body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: existing.row }),
+      });
+      if (!rowUpdate.ok) throw new Error("Couldn’t synchronize the existing Google Sheets row reference.");
+      await formatAndSortSheet(accessToken);
+      return res.status(200).json({ reusedExistingRow: true, sheetRow: existing.row, identifier });
+    }
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method: "POST",
       headers: { ...json, Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ values }),
     });
-    if (!response.ok) throw new Error("Couldn’t add the row to Google Sheets.");
+    if (!response.ok) throw new Error(await googleError(response, "Couldn’t add the row to Google Sheets"));
     const result = await response.json();
     const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
     await copyPromptFromPreviousRow(accessToken, destinationRow);
