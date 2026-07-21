@@ -116,6 +116,7 @@ export default async function handler(req, res) {
     if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {}, restoredIdentifiers });
     const updatedArticleIds = [];
     const statuses = {};
+    const imagesByArticleId = {};
     for (const row of syncedRows) {
       const identifier = String(row[3]).trim();
       const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,generation_identifier,post_concepts(id,image_summary,caption,hashtags)`, { headers });
@@ -144,6 +145,10 @@ export default async function handler(req, res) {
 
       const sourceImages = row.slice(12, 17).filter(Boolean);
       const images = sourceImages.map(driveImageUrl);
+      // Always return the live sheet images, including for rows whose database
+      // content is already synchronized. This lets the client repair stale or
+      // incomplete local state without relying on another database write.
+      imagesByArticleId[article.id] = images;
       const caption = String(row[10] || "");
       const hashtags = String(row[11] || "").split(/[\s,]+/).filter(Boolean);
       const currentImages = Array.isArray(concept.image_summary?.sheet_images) ? concept.image_summary.sheet_images : [];
@@ -187,6 +192,6 @@ export default async function handler(req, res) {
       updatedArticleIds.push(article.id);
       statuses[article.id] = "Generated";
     }
-    return res.status(200).json({ updatedArticleIds, statuses, restoredIdentifiers });
+    return res.status(200).json({ updatedArticleIds, statuses, imagesByArticleId, restoredIdentifiers });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
 }
