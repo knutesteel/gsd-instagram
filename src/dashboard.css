@@ -247,3 +247,9 @@
 .trending-item p { margin: 0; color: #59564f; font-size: .87rem; line-height: 1.42; }
 .trending-item b { display: block; margin-top: 8px; font-size: .78rem; color: #263c2d; }
 .trending-item .trending-angle { margin-top: 2px; color: #34342f; }
+
+
+.page-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.detail-status-control { display: flex; align-items: center; gap: 7px; padding: 0 2px; color: #514c44; font-size: .82rem; font-weight: 700; }
+.detail-status-control select { min-width: 132px; padding: 8px 28px 8px 10px; border: 1px solid #d8d2c7; border-radius: 8px; background: #fffdf9; color: #34342f; font: inherit; }
+.detail-actions button:disabled { opacity: .46; cursor: not-allowed; }
