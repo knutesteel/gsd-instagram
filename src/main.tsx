@@ -187,6 +187,25 @@ function App() {
     if (!supabase || !userId) return;
     void loadStories().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t load your queue."));
   }, [userId]);
+  useEffect(() => {
+    if (!supabase || !userId) return;
+    const client = supabase;
+    const refreshFromDatabase = () => {
+      if (document.visibilityState === "hidden") return;
+      void loadStories().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t refresh your queue."));
+    };
+    const channel = client
+      .channel(`articles-status-${userId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "articles", filter: `user_id=eq.${userId}` }, refreshFromDatabase)
+      .subscribe();
+    window.addEventListener("focus", refreshFromDatabase);
+    document.addEventListener("visibilitychange", refreshFromDatabase);
+    return () => {
+      window.removeEventListener("focus", refreshFromDatabase);
+      document.removeEventListener("visibilitychange", refreshFromDatabase);
+      void client.removeChannel(channel);
+    };
+  }, [userId]);
   useEffect(() => { void loadConcept(selected); }, [selected]);
   useEffect(() => {
     // A reload must not perform a write to Google Sheets when every record that
