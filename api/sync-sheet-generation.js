@@ -116,7 +116,7 @@ export default async function handler(req, res) {
     const statuses = {};
     for (const row of syncedRows) {
       const identifier = String(row[3]).trim();
-      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,generation_identifier,post_concepts(id,image_summary)`, { headers });
+      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,generation_identifier,post_concepts(id,image_summary,caption,hashtags)`, { headers });
       if (!articleResponse.ok) continue;
       const article = (await articleResponse.json())[0];
       const concept = article?.post_concepts?.[0];
@@ -124,6 +124,7 @@ export default async function handler(req, res) {
 
       const sheetStatus = String(row[1]).trim().toLowerCase();
       if (sheetStatus === "approved") {
+        if (article.status === "approved_to_post") continue;
         const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "approved_to_post" }) });
         if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as approved.");
         updatedArticleIds.push(article.id);
@@ -133,6 +134,14 @@ export default async function handler(req, res) {
 
       const sourceImages = row.slice(12, 17).filter(Boolean);
       const images = sourceImages.map(driveImageUrl);
+      const caption = String(row[10] || "");
+      const hashtags = String(row[11] || "").split(/[\s,]+/).filter(Boolean);
+      const currentImages = Array.isArray(concept.image_summary?.sheet_images) ? concept.image_summary.sheet_images : [];
+      const alreadySynced = article.status === "generated"
+        && JSON.stringify(currentImages) === JSON.stringify(images)
+        && String(concept.caption || "") === caption
+        && JSON.stringify(concept.hashtags || []) === JSON.stringify(hashtags);
+      if (alreadySynced) continue;
       // Save the Generated status and all visible content first. Image import is best-effort
       // so a Drive permission delay never prevents the dashboard from updating.
       const conceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
@@ -140,8 +149,8 @@ export default async function handler(req, res) {
         headers: { ...headers, Prefer: "return=minimal" },
         body: JSON.stringify({
           image_summary: { ...(concept.image_summary || {}), sheet_images: images, imported_image_count: 0 },
-          caption: String(row[10] || ""),
-          hashtags: String(row[11] || "").split(/[\\s,]+/).filter(Boolean),
+          caption,
+          hashtags,
         }),
       });
       if (!conceptUpdate.ok) throw new Error("Couldn’t save the generated post content.");

@@ -102,6 +102,7 @@ function App() {
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [userId, setUserId] = useState<string | null>(null);
   const normalizingIdentifiers = useRef(false);
+  const syncingGeneratedContent = useRef(false);
   const active = items.find((i) => i.id === selected) ?? items[0];
   const proposed = items.filter((i) => i.status !== "Archived");
   const detailNavigationItems = items.filter((item) => item.status !== "Archived" && (articleStatusFilter === "all" || item.status === articleStatusFilter));
@@ -115,6 +116,18 @@ function App() {
       return link?.signedUrl;
     }));
     return { ...data, image_summary: { ...(data.image_summary ?? {}), rendered_images: signed.filter(Boolean) } } as Concept;
+  };
+  const loadStories = async () => {
+    if (!supabase) return [] as Story[];
+    const { data, error } = await supabase
+      .from("articles")
+      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)")
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(`Couldn’t load your queue: ${error.message}`);
+    const saved: Story[] = (data ?? []).map(storyFromRow);
+    setItems(saved);
+    setSelected((current) => current && saved.some((story) => story.id === current) ? current : saved[0]?.id ?? "");
+    return saved;
   };
   const loadConcept = async (articleId: string) => {
     if (!supabase || !articleId) return;
@@ -146,12 +159,7 @@ function App() {
   }, []);
   useEffect(() => {
     if (!supabase || !userId) return;
-    supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)").order("created_at", { ascending: false }).then(({ data, error }) => {
-      if (error) return notify(`Couldn’t load your queue: ${error.message}`);
-      const saved: Story[] = (data ?? []).map(storyFromRow);
-      setItems(saved);
-      if (saved[0]) setSelected(saved[0].id);
-    });
+    void loadStories().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t load your queue."));
   }, [userId]);
   useEffect(() => { void loadConcept(selected); }, [selected]);
   useEffect(() => {
@@ -231,13 +239,19 @@ function App() {
     return result as { updatedRange?: string };
   };
   const syncGeneratedContent = async () => {
-    if (!supabase) return;
+    if (!supabase || syncingGeneratedContent.current) return { updatedArticleIds: [], statuses: {} };
+    syncingGeneratedContent.current = true;
+    try {
     const { data } = await supabase.auth.getSession(); if (!data.session) return;
     const response = await fetch("/api/sync-sheet-generation", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}` } });
     const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Couldn’t sync generated content.");
     const ids: string[] = result.updatedArticleIds ?? [];
-    const statuses: Record<string, Story["status"]> = result.statuses ?? {};
-    if (ids.length) { setItems((old) => old.map((item) => statuses[item.id] ? { ...item, status: statuses[item.id] } : item)); if (selected && ids.includes(selected)) await loadConcept(selected); }
+    await loadStories();
+    if (selected && ids.includes(selected)) await loadConcept(selected);
+    return result;
+    } finally {
+      syncingGeneratedContent.current = false;
+    }
   };
   const approveGeneratedContent = async (articleId: string) => {
     if (!supabase) return;
@@ -259,12 +273,26 @@ function App() {
     const response = await fetch("/api/research", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` }, body: JSON.stringify(payload) });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Research failed.");
-    await supabase.from("articles").select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(post_type,summary,image_summary)").order("created_at", { ascending: false }).then(({ data: rows }) => {
-      const saved: Story[] = (rows ?? []).map(storyFromRow);
-      setItems(saved); if (saved[0]) setSelected(saved[0].id);
-    });
+    await loadStories();
     return result as { count: number; articleIds?: string[] };
   };
+  useEffect(() => {
+    if (!supabase || !userId) return;
+    let disposed = false;
+    const refreshFromSheet = () => {
+      if (disposed || document.visibilityState === "hidden") return;
+      void syncGeneratedContent().catch(() => undefined);
+    };
+    const initialRefresh = window.setTimeout(refreshFromSheet, 750);
+    const refreshInterval = window.setInterval(refreshFromSheet, 60_000);
+    window.addEventListener("focus", refreshFromSheet);
+    return () => {
+      disposed = true;
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(refreshInterval);
+      window.removeEventListener("focus", refreshFromSheet);
+    };
+  }, [userId, selected]);
   if (!authReady) return <div className="auth-page"><div className="auth-card">Loading your workspace…</div></div>;
   if (supabaseConfigured && !userId) return <AuthGate />;
   return (
@@ -881,7 +909,6 @@ function Detail({
   const isTextOverview = concept?.image_summary?.origin === "text_overview";
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
-  useEffect(() => { void syncGeneratedContent().catch(() => undefined); }, [story.id]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
