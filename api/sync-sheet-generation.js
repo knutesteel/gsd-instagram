@@ -1,6 +1,6 @@
 import { createPrivateKey, sign } from "node:crypto";
 
-const spreadsheetId = "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
+const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
 const driveFileId = (url) => String(url || "").match(/[?&]id=([A-Za-z0-9_-]+)/)?.[1] || String(url || "").match(/\/file\/d\/([A-Za-z0-9_-]+)/)?.[1] || String(url || "").match(/\/d\/([A-Za-z0-9_-]+)(?:[=/?]|$)/)?.[1];
 const driveImageUrl = (url) => {

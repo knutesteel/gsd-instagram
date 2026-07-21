@@ -1,7 +1,7 @@
 import { createPrivateKey, sign } from "node:crypto";
 
 const json = { "Content-Type": "application/json" };
-const spreadsheetId = "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
+const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
 
 async function googleAccessToken() {
