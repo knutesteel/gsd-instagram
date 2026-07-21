@@ -38,7 +38,7 @@ type Story = {
   score: number;
   url?: string;
   type: string;
-  status: "New" | "Sent to Sheets" | "Generated" | "Approved" | "Archived";
+  status: "New" | "Sent to Sheets" | "Generated" | "Approved" | "Posted" | "Archived";
   generationIdentifier?: string | null;
   generationSheetRow?: number | null;
   featuredImage?: string | null;
@@ -87,7 +87,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     score: row.rank ?? 0,
     type: postConcept?.post_type ?? "carousel",
     featuredImage: featuredImageOverride || embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
-    status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"],
+    status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : row.status === "posted" ? "Posted" : "New") as Story["status"],
   };
 }
 
@@ -212,7 +212,7 @@ function App() {
       }
     });
   }, [userId, items]);
-  const updateStatus = async (id: string, status: "discarded" | "new" | "sent_to_sheets" | "generated" | "approved_to_post") => {
+  const updateStatus = async (id: string, status: "discarded" | "new" | "sent_to_sheets" | "generated" | "approved_to_post" | "posted") => {
     if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
     if (error) throw new Error(`Couldn’t save change: ${error.message}`);
@@ -570,7 +570,7 @@ function Dashboard({
     });
   const categories = [...new Set(items.map((item) => item.category))];
   const types = [...new Set(items.map((item) => item.type))];
-  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Archived"];
+  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Posted", "Archived"];
   const groupedStories = Array.from(
     shown.reduce((groups, item) => {
       const stories = groups.get(item.status) ?? [];
@@ -604,7 +604,7 @@ function Dashboard({
         <select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select value={minimumScore} onChange={(e) => setMinimumScore(e.target.value)}><option value="0">Any score</option><option value="90">90+</option><option value="75">75+</option><option value="60">60+</option></select>
         <select value={type} onChange={(e) => setType(e.target.value)}><option value="all">All post types</option>{types.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | Story["status"])} aria-label="Filter by status"><option value="all">All statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option></select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | Story["status"])} aria-label="Filter by status"><option value="all">All statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option></select>
         <select value={dateSort} onChange={(e) => setDateSort(e.target.value as "newest" | "oldest")} aria-label="Sort by date added"><option value="newest">Date added: Newest first</option><option value="oldest">Date added: Oldest first</option></select>
       </div>
       <div className="story-table">
@@ -632,7 +632,7 @@ function Dashboard({
               <span className="chip">{item.category}</span>
               <span className="score">{item.score}</span>
               <span className="type">{item.type}</span>
-              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Archived</option></select>
+              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select>
               <div className="actions">
                 {item.status === "Generated" && <button className="button compact primary" onClick={() => approve(item.id)}><FiCheck /> Approve</button>}
               </div>
@@ -655,7 +655,7 @@ function ArticleList({
   setStatusFilter: (value: "all" | Story["status"]) => void;
   select: (id: string) => void;
 }) {
-  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved"];
+  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Posted"];
   const shown = items.filter((item) => item.status !== "Archived" && (statusFilter === "all" || item.status === statusFilter));
   const groups = Array.from(shown.reduce((all, item) => {
     const group = all.get(item.status) ?? [];
@@ -669,7 +669,7 @@ function ArticleList({
     </header>
     <div className="filter-row article-list-filter">
       <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | Story["status"])} aria-label="Filter articles by status">
-        <option value="all">All active statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option>
+        <option value="all">All active statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option>
       </select>
     </div>
     <div className="article-list">
@@ -925,7 +925,7 @@ function Detail({
   const sheetImages = rawSheetImages.map(displayImageUrl);
   const images = (renderedImages.length ? renderedImages : embeddedImages.length ? embeddedImages : sheetImages) as string[];
   const fallbackImage = (index: number) => directImageFallback(rawSheetImages[index]);
-  const lockedAfterSheetSend = ["Sent to Sheets", "Generated", "Approved"].includes(story.status);
+  const lockedAfterSheetSend = ["Sent to Sheets", "Generated", "Approved", "Posted"].includes(story.status);
   const isTextOverview = concept?.image_summary?.origin === "text_overview";
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
@@ -950,7 +950,7 @@ function Detail({
             Next <FiArrowRight />
           </button>
           </div>
-          <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Archived</option></select></label>
+          <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select></label>
           <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
           {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}
           <button onClick={rerun} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : isTextOverview ? "Regenerate suggestion" : "Regenerate analysis"}</button>
