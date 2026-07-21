@@ -253,3 +253,25 @@
 .detail-status-control { display: flex; align-items: center; gap: 7px; padding: 0 2px; color: #514c44; font-size: .82rem; font-weight: 700; }
 .detail-status-control select { min-width: 132px; padding: 8px 28px 8px 10px; border: 1px solid #d8d2c7; border-radius: 8px; background: #fffdf9; color: #34342f; font: inherit; }
 .detail-actions button:disabled { opacity: .46; cursor: not-allowed; }
+
+.article-list-filter { margin-bottom: 20px; }
+.article-list { display: grid; gap: 22px; }
+.article-status-group { overflow: hidden; border: 1px solid #e1dbcf; border-radius: 12px; background: #fffdf9; }
+.article-status-group > header { display: flex; align-items: center; justify-content: space-between; padding: 13px 18px; border-bottom: 1px solid #e6e0d6; background: #f6f4ed; }
+.article-status-group h2 { margin: 0; color: #344536; font-size: .92rem; letter-spacing: .04em; text-transform: uppercase; }
+.article-status-group header span { color: #777168; font-size: .82rem; }
+.article-list-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.article-list-card { display: grid; grid-template-columns: minmax(0, 1fr) 116px; gap: 16px; min-height: 150px; padding: 18px; border-right: 1px solid #eee8de; border-bottom: 1px solid #eee8de; }
+.article-list-card:nth-child(2n) { border-right: 0; }
+.article-list-copy { min-width: 0; }
+.article-list-title { padding: 0; color: #292c28; font: 700 1.05rem/1.3 inherit; text-align: left; text-decoration: underline; text-decoration-color: #d15636; text-underline-offset: 4px; }
+.article-list-title:hover { color: #bd4b2e; }
+.article-list-copy p { display: -webkit-box; margin: 9px 0 12px; overflow: hidden; color: #625f57; font-size: .88rem; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.status-pill { display: inline-flex; padding: 4px 8px; border-radius: 999px; background: #e6ede3; color: #3d543d; font-size: .75rem; font-weight: 700; }
+.article-thumbnail { display: grid; min-height: 112px; overflow: hidden; place-items: center; border-radius: 8px; background: #efede7; color: #827c72; font-size: .72rem; text-align: center; }
+.article-thumbnail img { width: 100%; height: 100%; object-fit: cover; }
+
+@media (max-width: 900px) {
+  .article-list-grid { grid-template-columns: 1fr; }
+  .article-list-card, .article-list-card:nth-child(2n) { border-right: 0; }
+}
