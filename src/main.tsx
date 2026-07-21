@@ -72,6 +72,7 @@ function directImageFallback(value: unknown) {
 function storyFromRow(row: any): Story {
   const postConcept = row.post_concepts?.[0];
   const imageSummary = postConcept?.image_summary ?? {};
+  const embeddedImage = Array.isArray(imageSummary.embedded_images) ? imageSummary.embedded_images.find(Boolean) : null;
   const sheetImage = Array.isArray(imageSummary.sheet_images) ? imageSummary.sheet_images.find(Boolean) : null;
   const isTextOverview = imageSummary.origin === "text_overview";
   return {
@@ -85,7 +86,7 @@ function storyFromRow(row: any): Story {
     category: row.category ?? "Uncategorized",
     score: row.rank ?? 0,
     type: postConcept?.post_type ?? "carousel",
-    featuredImage: sheetImage ? displayImageUrl(sheetImage) : null,
+    featuredImage: embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
     status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : "New") as Story["status"],
   };
 }
@@ -901,9 +902,10 @@ function Detail({
   // Prefer app-storage copies. If any cannot be signed, retain the Drive image
   // URLs as a fallback instead of rendering an empty gallery.
   const renderedImages = Array.isArray(concept?.image_summary?.rendered_images) ? concept.image_summary.rendered_images.filter(Boolean) : [];
+  const embeddedImages = Array.isArray(concept?.image_summary?.embedded_images) ? concept.image_summary.embedded_images.filter(Boolean) : [];
   const rawSheetImages = Array.isArray(concept?.image_summary?.sheet_images) ? concept.image_summary.sheet_images.filter(Boolean) : [];
   const sheetImages = rawSheetImages.map(displayImageUrl);
-  const images = (renderedImages.length ? renderedImages : sheetImages) as string[];
+  const images = (renderedImages.length ? renderedImages : embeddedImages.length ? embeddedImages : sheetImages) as string[];
   const fallbackImage = (index: number) => directImageFallback(rawSheetImages[index]);
   const lockedAfterSheetSend = ["Sent to Sheets", "Generated", "Approved"].includes(story.status);
   const isTextOverview = concept?.image_summary?.origin === "text_overview";
