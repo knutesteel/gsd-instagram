@@ -92,15 +92,19 @@ function App() {
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
     if (error) throw new Error(`Couldn’t save change: ${error.message}`);
   };
-  const discard = (id: string) => {
-    setItems((old) =>
-      old.map((i) => (i.id === id ? { ...i, status: "Archived" } : i)),
-    );
-    void updateStatus(id, "discarded");
-    notify(
-      "Article moved to Archive and protected from future duplicate searches.",
-    );
-    setScreen("dashboard");
+  const setArticleStatus = async (id: string, status: Story["status"]) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/update-sheet-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
+      body: JSON.stringify({ articleId: id, status }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "Couldn’t update the status.");
+    setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item));
+    if (id === selected) await loadConcept(id);
   };
   const saveDetail = async (articleId: string, values: { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; caption: string; prompt: string; hashtags: string; summary: string }) => {
     if (!supabase) return;
@@ -213,9 +217,9 @@ function App() {
               void loadConcept(id);
               setScreen("detail");
             }}
-            onDiscard={discard}
-            onStatus={(id, status) => { if (status === "Approved") { void approveGeneratedContent(id).then(() => notify("Post approved in the app and Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t approve this post.")); return; } setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item)); void updateStatus(id, status === "Sent to Sheets" ? "sent_to_sheets" : status === "Generated" ? "generated" : "new"); }}
-            approve={(id) => void approveGeneratedContent(id).then(() => notify("Post approved in the app and Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t approve this post."))}
+            onStatus={(id, status) => void setArticleStatus(id, status).then(() => { notify(`Status changed to ${status} in the app and Google Sheet.`); if (status === "Archived") setScreen("archive"); }).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update the status."))}
+            approve={(id) => void setArticleStatus(id, "Approved").then(() => notify("Post approved in the app and Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t approve this post."))}
+            refreshStatus={() => void syncGeneratedContent().then(() => notify("Status and generated content refreshed from the Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t refresh status."))}
           />
         )}
         {screen === "discover" && (
@@ -236,7 +240,7 @@ function App() {
             notify={notify}
             previous={() => navigate(-1)}
             next={() => navigate(1)}
-            discard={() => discard(active.id)}
+            onStatus={(status) => void setArticleStatus(active.id, status).then(() => { notify(`Status changed to ${status} in the app and Google Sheet.`); if (status === "Archived") setScreen("archive"); }).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update the status."))}
             sendForGeneration={sendForGeneration}
             syncGeneratedContent={syncGeneratedContent}
             approveGeneratedContent={approveGeneratedContent}
@@ -246,12 +250,7 @@ function App() {
           <Archive
             items={items.filter((i) => i.status === "Archived")}
             restore={(id) => {
-              setItems((old) =>
-                old.map((i) =>
-                  i.id === id ? { ...i, status: "New" } : i,
-                ),
-              );
-              notify("Restored to the story queue.");
+              void setArticleStatus(id, "New").then(() => notify("Restored to the story queue and Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t restore the article."));
             }}
           />
         )}
@@ -381,16 +380,16 @@ function Dashboard({
   items,
   discover,
   select,
-  onDiscard,
   onStatus,
   approve,
+  refreshStatus,
 }: {
   items: Story[];
   discover: () => void;
   select: (id: string) => void;
-  onDiscard: (id: string) => void;
-  onStatus: (id: string, status: Exclude<Story["status"], "Archived">) => void;
+  onStatus: (id: string, status: Story["status"]) => void;
   approve: (id: string) => void;
+  refreshStatus: () => void;
 }) {
   const [filter, setFilter] = useState("");
   const [category, setCategory] = useState("all");
@@ -422,15 +421,11 @@ function Dashboard({
           <h1>Your story queue</h1>
           <p>High-potential stories, ranked for the GSD audience.</p>
         </div>
-        <button className="button primary" onClick={discover}>
-          <FiPlus /> Find fresh stories
-        </button>
+        <div className="page-actions">
+          <button onClick={refreshStatus}><FiRefreshCw /> Refresh status</button>
+          <button className="button primary" onClick={discover}><FiPlus /> Find fresh stories</button>
+        </div>
       </header>
-      <div className="metrics">
-        <Metric number={String(items.length)} label="To review" icon={<FiFileText />} />
-        <Metric number={String(items.filter((item) => item.status === "Generated").length)} label="Generated" icon={<FiCheck />} />
-        <Metric number="0" label="Archived" icon={<FiArchive />} />
-      </div>
       <div className="filter-row">
         <label>
           <FiSearch />
@@ -470,10 +465,9 @@ function Dashboard({
               <span className="chip">{item.category}</span>
               <span className="score">{item.score}</span>
               <span className="type">{item.type}</span>
-              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Exclude<Story["status"], "Archived">)}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option></select>
+              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Archived</option></select>
               <div className="actions">
                 {item.status === "Generated" && <button className="button compact primary" onClick={() => approve(item.id)}><FiCheck /> Approve</button>}
-                <button className="text-danger" onClick={() => onDiscard(item.id)}>Discard</button>
               </div>
             </div>
           ))}
@@ -667,7 +661,7 @@ function Detail({
   concept,
   previous,
   next,
-  discard,
+  onStatus,
   saveDetail,
   reanalyze,
   sendForGeneration,
@@ -679,7 +673,7 @@ function Detail({
   concept: Concept | null;
   previous: () => void;
   next: () => void;
-  discard: () => void;
+  onStatus: (status: Story["status"]) => void;
   saveDetail: (id: string, values: DetailValues) => Promise<void>;
   reanalyze: () => Promise<unknown>;
   sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
@@ -691,6 +685,7 @@ function Detail({
   const [busy, setBusy] = useState("");
   const [activeImage, setActiveImage] = useState(0);
   const images = Array.isArray(concept?.image_summary?.sheet_images) ? concept.image_summary.sheet_images.filter(Boolean) as string[] : [];
+  const lockedAfterSheetSend = ["Sent to Sheets", "Generated", "Approved"].includes(story.status);
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
   useEffect(() => { void syncGeneratedContent(); }, [story.id]);
@@ -703,9 +698,6 @@ function Detail({
   return (
     <section>
       <div className="detail-top">
-        <p>
-          Story queue <span>/</span> {story.title}
-        </p>
         <div className="detail-actions">
           <div className="detail-navigation">
           <button onClick={previous}>
@@ -715,16 +707,13 @@ function Detail({
             Next <FiArrowRight />
           </button>
           </div>
-          <button onClick={discard}>
-            <FiTrash2 /> Discard
-          </button>
-          <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
+          <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Archived</option></select></label>
+          <button onClick={() => void refresh()} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
           {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}
-          <button onClick={rerun} disabled={Boolean(busy)}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : "Regenerate analysis"}</button>
-          <button onClick={save} disabled={Boolean(busy)}><FiCheck /> {busy === "save" ? "Saving…" : "Save changes"}</button>
+          <button onClick={rerun} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : "Regenerate analysis"}</button>
+          <button onClick={save} disabled={Boolean(busy) || lockedAfterSheetSend}><FiCheck /> {busy === "save" ? "Saving…" : "Save changes"}</button>
         </div>
       </div>
-      <h1>{values.title || "Untitled article"}</h1>
       <div className="detail-fields">
         <div className="left-fields detail-editor-fields">
           <Field label="Article title"><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
