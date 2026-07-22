@@ -8,6 +8,7 @@ import {
   FiChevronDown,
   FiClock,
   FiCompass,
+  FiCopy,
   FiEdit3,
   FiExternalLink,
   FiFileText,
@@ -1003,6 +1004,29 @@ function Detail({
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error"); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
   const send = async () => { setBusy("sheet"); try { const result = await sendForGeneration(story.id, values) as { warnings?: string[] }; notify(result.warnings?.length ? `Article saved. ${result.warnings.join(" ")}` : "Article sent to the Google Sheet for generation.", result.warnings?.length ? "error" : "success"); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet.", "error"); } finally { setBusy(""); } };
+  const generateContent = async () => {
+    const chatWindow = window.open("https://chatgpt.com/g/g-p-69e8effb73588191acaccbaed49a9d96/c/6a5fd350-e1f8-83ea-a391-a1e3cd4b4dcb", "_blank");
+    if (chatWindow) chatWindow.opener = null;
+    setBusy("generate");
+    try {
+      if (!supabase) throw new Error("Supabase is not configured.");
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("Please sign in again.");
+      const response = await fetch("/api/generation-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
+        body: JSON.stringify({ articleId: story.id }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
+      await navigator.clipboard.writeText(result.prompt);
+      notify(chatWindow ? "Column J copied to the clipboard and ChatGPT opened." : "Column J copied. Your browser blocked the new ChatGPT window.", chatWindow ? "success" : "error");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Couldn’t copy the generation prompt.", "error");
+    } finally {
+      setBusy("");
+    }
+  };
   const refresh = async () => { setBusy("refresh"); try { await syncGeneratedContent(); notify("Content refreshed from the Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t refresh generated content.", "error"); } finally { setBusy(""); } };
   const approve = async () => { setBusy("approve"); try { await approveGeneratedContent(story.id); notify("Post approved in the app and Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t approve this post.", "error"); } finally { setBusy(""); } };
   return (
@@ -1066,6 +1090,7 @@ function Detail({
         </div> : <>
           <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
           <button className={story.status === "Sent to Sheets" ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || story.status === "Sent to Sheets"}><FiExternalLink /> {story.status === "Sent to Sheets" ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
+          <button className="button wide" onClick={() => void generateContent()} disabled={Boolean(busy)}><FiCopy /> {busy === "generate" ? "Copying…" : "Generate Content"}</button>
         </>}
       </section>
     </section>
