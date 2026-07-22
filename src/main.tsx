@@ -216,12 +216,10 @@ function App() {
   }, [userId]);
   useEffect(() => { void loadConcept(selected); }, [selected]);
   useEffect(() => {
-    // A reload must not perform a write to Google Sheets when every record that
-    // has reached the generation workflow already has its durable numeric ID.
-    // Sending a new record still assigns its ID in the send endpoint; this is
-    // only a one-time repair path for legacy/incomplete records.
+    // One-time repair for any legacy app record. New and Archived records also
+    // require durable identifiers even when they never reach Google Sheets.
     const needsIdentifierRepair = items.some((item) =>
-      item.status !== "New" && item.status !== "Archived" && !/^\d+$/.test(String(item.generationIdentifier ?? "").trim()),
+      !/^\d+$/.test(String(item.generationIdentifier ?? "").trim()),
     );
     if (!supabase || !userId || !needsIdentifierRepair || normalizingIdentifiers.current) return;
     const client = supabase;
@@ -1100,6 +1098,7 @@ function Detail({
           <Field label={isTextOverview ? "Overview summary" : "Article Summary"}><textarea className="summary-editor" value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder={isTextOverview ? "A concise summary of the post idea" : "A two-to-three sentence article summary"} /></Field>
           <div className="detail-metadata-row">
             <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} placeholder={isTextOverview ? "No article linked" : "https://example.com/article"} disabled={isTextOverview} /></Field>
+            <Field label="Identifier"><input value={story.generationIdentifier ?? ""} placeholder="Not assigned" readOnly /></Field>
             <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Carousel</option><option value="single_image">Single Image</option><option value="multi_pane_cartoon">Multi-pane Cartoon</option><option value="reel">Reel</option></select></Field>
             <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
             <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
