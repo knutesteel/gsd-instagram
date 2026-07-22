@@ -53,17 +53,21 @@ async function nextSequentialIdentifier(accessToken, databaseIdentifiers = []) {
   const current = [...sheetIdentifiers, ...appIdentifiers];
   return String((current.length ? Math.max(...current) : 0) + 1);
 }
-const valueKey = (value) => String(value || "").trim().toLocaleLowerCase();
-async function existingSheetRow(accessToken, identifier) {
+const cellValue = (value) => String(value ?? "").trim();
+export function locateGenerationRow(rows, identifier) {
+  const existingIndex = rows.findIndex((row, rowIndex) => rowIndex > 0 && cellValue(row[3]) === cellValue(identifier));
+  if (existingIndex >= 0) return { row: existingIndex + 1, exists: true };
+  const emptyIndex = rows.findIndex((row, rowIndex) => rowIndex > 0 && !row.some((value) => cellValue(value)));
+  return { row: emptyIndex >= 0 ? emptyIndex + 1 : Math.max(rows.length + 1, 2), exists: false };
+}
+async function generationSheetRows(accessToken) {
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
-    "Existing generation row lookup",
+    "Generation sheet lookup",
   );
-  if (!response.ok) throw new Error(await googleError(response, "Couldn’t check the existing generation row"));
-  const rows = (await response.json()).values || [];
-  const index = rows.findIndex((row, rowIndex) => rowIndex > 0 && String(row[0] || "").trim() === String(identifier).trim());
-  return index < 0 ? null : { row: index + 1 };
+  if (!response.ok) throw new Error(await googleError(response, "Couldn’t read the generation sheet"));
+  return (await response.json()).values || [];
 }
 async function sheetRowForIdentifier(accessToken, identifier) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -72,17 +76,22 @@ async function sheetRowForIdentifier(accessToken, identifier) {
   const index = rows.findIndex((row) => String(row[0] || "").trim() === String(identifier).trim());
   return index >= 0 ? index + 1 : null;
 }
-async function verifySheetRow(accessToken, identifier, title) {
+async function readExactSheetRow(accessToken, row) {
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!C:D")}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${row}:Q${row}`)}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
     "Generation row verification",
   );
   if (!response.ok) throw new Error(await googleError(response, "Couldn’t verify the Google Sheets row"));
-  const rows = (await response.json()).values || [];
-  const index = rows.findIndex((row) => valueKey(row[0]) === valueKey(title) && String(row[1] || "").trim() === String(identifier).trim());
-  if (index < 0) throw new Error("Google Sheets did not contain the article after the write, so the send was not marked successful.");
-  return index + 1;
+  return ((await response.json()).values || [])[0] || [];
+}
+export function verifyGenerationValues(actual, expected) {
+  const padded = Array.from({ length: 17 }, (_, index) => cellValue(actual[index]));
+  const wanted = Array.from({ length: 17 }, (_, index) => cellValue(expected[index]));
+  const mismatches = [];
+  for (let index = 0; index < 12; index += 1) if (padded[index] !== wanted[index]) mismatches.push(index + 1);
+  for (let index = 12; index < 17; index += 1) if (padded[index] !== "") mismatches.push(index + 1);
+  return { ok: mismatches.length === 0 && padded[3] === wanted[3], mismatches };
 }
 export function rowNumberFromUpdatedRange(updatedRange) {
   const match = String(updatedRange || "").match(/![A-Z]+(\d+)(?::[A-Z]+\d+)?$/i);
@@ -135,17 +144,24 @@ export default async function handler(req, res) {
   const concept = Array.isArray(article.post_concepts) ? article.post_concepts[0] : article.post_concepts;
   if (!concept?.summary || !concept?.image_summary?.content) return res.status(422).json({ error: "Add an article summary and suggested content before sending this item." });
 
+  let stage = "authenticate";
+  let intendedRow = null;
+  let identifier = "";
   try {
     const accessToken = await googleAccessToken();
+    stage = "prepare";
     const content = concept.image_summary.content;
     const identifiersResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&select=generation_identifier`, { headers: auth });
     if (!identifiersResponse.ok) throw new Error("Couldn’t determine the next app identifier.");
     const databaseIdentifiers = (await identifiersResponse.json()).map((row) => row.generation_identifier);
     // The app/database identifier is authoritative. A legacy Sheet identifier
     // is used only when the app record does not yet have a numeric identifier.
-    const identifier = numericIdentifier(article.generation_identifier)
+    identifier = numericIdentifier(article.generation_identifier)
       || await nextSequentialIdentifier(accessToken, databaseIdentifiers);
-    const existing = await existingSheetRow(accessToken, identifier);
+    stage = "locate-row";
+    const sheetRows = await generationSheetRows(accessToken);
+    const destination = locateGenerationRow(sheetRows, identifier);
+    intendedRow = destination.row;
     const isTextOverview = concept.image_summary?.origin === "text_overview";
     const url = isTextOverview ? "" : article.source_url || article.canonical_url || "";
     const type = typeLabel(concept.post_type);
@@ -164,49 +180,40 @@ export default async function handler(req, res) {
       Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
       "", "", "", "", "",
     ];
-    if (existing) {
-      // Identifier is the row key. Replace the complete row so stale generated
-      // output in M:Q cannot survive a resend.
-      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${existing.row}:Q${existing.row}`)}?valueInputOption=USER_ENTERED`, {
-        method: "PUT",
-        headers: { ...json, Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ values: [rowValues] }),
-      });
-      if (!update.ok) throw new Error(await googleError(update, "Couldn’t update the existing Google Sheets row"));
-      await formatAndSortSheet(accessToken);
-      const sortedRow = await verifySheetRow(accessToken, identifier, article.title);
-      if (!sortedRow) throw new Error("The updated article could not be found after sorting the Google Sheet.");
-      const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
-        method: "PATCH", headers: { ...auth, ...json, Prefer: "return=minimal" },
-        body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sortedRow }),
-      });
-      if (!rowUpdate.ok) throw new Error("Couldn’t synchronize the existing Google Sheets row reference.");
-      return res.status(200).json({ reusedExistingRow: true, sheetRow: sortedRow, identifier });
-    }
-    const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
-      method: "POST",
+    stage = "write-row";
+    const write = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${intendedRow}:Q${intendedRow}`)}?valueInputOption=RAW`, {
+      method: "PUT",
       headers: { ...json, Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ values: [rowValues.slice(0, 12)] }),
-    });
-    if (!response.ok) throw new Error(await googleError(response, "Couldn’t add the row to Google Sheets"));
-    const result = await response.json();
-    // Google does not guarantee that append responses always contain the same
-    // updatedRange shape. Verify the write and use the actual row in the sheet
-    // when that response field is missing or formatted differently.
-    const destinationRow = rowNumberFromUpdatedRange(result.updates?.updatedRange)
-      || await verifySheetRow(accessToken, identifier, article.title);
-    await extendSheetFilter({ accessToken, spreadsheetId, lastRow: destinationRow });
-    await formatAndSortSheet(accessToken);
-    const sortedRow = await verifySheetRow(accessToken, identifier, article.title);
-    if (!sortedRow) throw new Error("The new article could not be found after sorting the Google Sheet.");
+      body: JSON.stringify({ range: `Sheet1!A${intendedRow}:Q${intendedRow}`, majorDimension: "ROWS", values: [rowValues] }),
+    }, "Generation row write");
+    if (!write.ok) throw new Error(await googleError(write, "Couldn’t write the Google Sheets row"));
+
+    stage = "verify-row";
+    const actualValues = await readExactSheetRow(accessToken, intendedRow);
+    const verification = verifyGenerationValues(actualValues, rowValues);
+    if (!verification.ok) throw new Error(`Google Sheets verification failed for columns ${verification.mismatches.join(", ") || "unknown"}.`);
+
+    const warnings = [];
+    stage = "format-sort";
+    try { await formatAndSortSheet(accessToken); } catch (error) { warnings.push(error instanceof Error ? error.message : "The row was saved, but sheet formatting failed."); }
+    stage = "relocate-row";
+    const sortedRow = await sheetRowForIdentifier(accessToken, identifier);
+    if (!sortedRow) throw new Error("The verified row could not be located by identifier after sorting.");
+    stage = "expand-filter";
+    try { await extendSheetFilter({ accessToken, spreadsheetId, lastRow: sortedRow }); } catch (error) { warnings.push(error instanceof Error ? error.message : "The row was saved, but the sheet filter was not expanded."); }
+
+    stage = "save-row-reference";
     const rowUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
       headers: { ...auth, ...json, Prefer: "return=minimal" },
       body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sortedRow }),
     });
-    if (!rowUpdate.ok) throw new Error("Couldn’t save the Google Sheets row reference.");
-    return res.status(200).json({ updatedRange: result.updates?.updatedRange, sheetRow: sortedRow, identifier });
+    if (!rowUpdate.ok) throw new Error("The sheet row was saved, but the app could not save its row reference.");
+    return res.status(200).json({ reusedExistingRow: destination.exists, sheetRow: sortedRow, identifier, verified: true, warnings });
   } catch (error) {
-    return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t add the row to Google Sheets." });
+    return res.status(502).json({
+      error: error instanceof Error ? error.message : "Couldn’t add the row to Google Sheets.",
+      diagnostics: { stage, identifier: identifier || null, intendedRow, verified: stage !== "authenticate" && stage !== "prepare" && stage !== "locate-row" && stage !== "write-row" ? false : null },
+    });
   }
 }

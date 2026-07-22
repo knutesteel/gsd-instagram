@@ -21,6 +21,7 @@ import {
 } from "react-icons/fi";
 import "./styles.css";
 import "./dashboard.css";
+import "./toast.css";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 
 type Screen =
@@ -29,6 +30,8 @@ type Screen =
   | "discover"
   | "detail"
   | "archive";
+type Toast = { message: string; kind: "success" | "error" };
+type Notify = (message: string, kind?: Toast["kind"]) => void;
 type Story = {
   id: string;
   title: string;
@@ -106,7 +109,8 @@ function App() {
   const [articleStatusFilter, setArticleStatusFilter] = useState<"all" | Story["status"]>("all");
   const [searching, setSearching] = useState(false);
   const [concept, setConcept] = useState<Concept | null>(null);
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastTimer = useRef<number | null>(null);
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [userId, setUserId] = useState<string | null>(null);
   const normalizingIdentifiers = useRef(false);
@@ -167,10 +171,13 @@ function App() {
     const { data: assets } = await client.from("assets").select("storage_path,sequence").eq("concept_id", data.id).eq("is_active", true).order("sequence");
     setConcept(await hydrateConceptImages({ ...data, assets: assets ?? [] }));
   };
-  const notify = (message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
+  const notify: Notify = (message, kind = "success") => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = null;
+    setToast({ message, kind });
+    if (kind === "success") toastTimer.current = window.setTimeout(() => setToast(null), 2600);
   };
+  useEffect(() => () => { if (toastTimer.current) window.clearTimeout(toastTimer.current); }, []);
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => {
@@ -396,9 +403,10 @@ function App() {
       </aside>
       <main className="main-content">
         {toast && (
-          <div className="toast">
-            <FiCheck />
-            {toast}
+          <div className={`toast ${toast.kind === "error" ? "toast-error" : "toast-success"}`} role={toast.kind === "error" ? "alert" : "status"}>
+            {toast.kind === "success" && <FiCheck />}
+            <span>{toast.message}</span>
+            {toast.kind === "error" && <button type="button" aria-label="Dismiss error" onClick={() => setToast(null)}><FiX /></button>}
           </div>
         )}
         {screen === "dashboard" && (
@@ -974,7 +982,7 @@ function Detail({
   sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
   syncGeneratedContent: () => Promise<void>;
   approveGeneratedContent: (articleId: string) => Promise<void>;
-  notify: (message: string) => void;
+  notify: Notify;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
   const [busy, setBusy] = useState("");
@@ -992,11 +1000,11 @@ function Detail({
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
-  const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail."); } finally { setBusy(""); } };
-  const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis."); } finally { setBusy(""); } };
-  const send = async () => { setBusy("sheet"); try { await sendForGeneration(story.id, values); notify("Article sent to the Google Sheet for generation."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet."); } finally { setBusy(""); } };
-  const refresh = async () => { setBusy("refresh"); try { await syncGeneratedContent(); notify("Content refreshed from the Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t refresh generated content."); } finally { setBusy(""); } };
-  const approve = async () => { setBusy("approve"); try { await approveGeneratedContent(story.id); notify("Post approved in the app and Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t approve this post."); } finally { setBusy(""); } };
+  const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error"); } finally { setBusy(""); } };
+  const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
+  const send = async () => { setBusy("sheet"); try { const result = await sendForGeneration(story.id, values) as { warnings?: string[] }; notify(result.warnings?.length ? `Article saved. ${result.warnings.join(" ")}` : "Article sent to the Google Sheet for generation.", result.warnings?.length ? "error" : "success"); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet.", "error"); } finally { setBusy(""); } };
+  const refresh = async () => { setBusy("refresh"); try { await syncGeneratedContent(); notify("Content refreshed from the Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t refresh generated content.", "error"); } finally { setBusy(""); } };
+  const approve = async () => { setBusy("approve"); try { await approveGeneratedContent(story.id); notify("Post approved in the app and Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t approve this post.", "error"); } finally { setBusy(""); } };
   return (
     <section>
       <header className="page-header generation-suggestions-header">

@@ -1,0 +1,25 @@
+.toast.toast-success {
+  background: #35422d;
+}
+
+.toast.toast-error {
+  background: #9f2f27;
+  max-width: min(560px, calc(100vw - 40px));
+}
+
+.toast span {
+  line-height: 1.4;
+}
+
+.toast-error button {
+  color: #fff;
+  display: grid;
+  place-items: center;
+  margin-left: 8px;
+  padding: 3px;
+  border-radius: 5px;
+}
+
+.toast-error button:hover {
+  background: #ffffff26;
+}
