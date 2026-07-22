@@ -181,7 +181,6 @@ export default async function handler(req, res) {
         body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sortedRow }),
       });
       if (!rowUpdate.ok) throw new Error("Couldn’t synchronize the existing Google Sheets row reference.");
-      await extendSheetFilter({ accessToken, spreadsheetId, lastRow: sortedRow });
       return res.status(200).json({ reusedExistingRow: true, sheetRow: sortedRow, identifier });
     }
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
