@@ -175,6 +175,18 @@ export default async function handler(req, res) {
       });
       if (!conceptUpdate.ok) throw new Error("Couldn’t save the generated post content.");
 
+      // The sheet status is authoritative. Persist it before attempting any
+      // best-effort Drive downloads so a slow, unavailable, or private image
+      // cannot leave the dashboard stuck at Sent to Sheets.
+      const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
+        method: "PATCH",
+        headers: { ...headers, Prefer: "return=minimal" },
+        body: JSON.stringify({ status: "generated" }),
+      });
+      if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as generated.");
+      updatedArticleIds.push(article.id);
+      statuses[article.id] = "Generated";
+
       if (sourceImages.length) {
         const imported = (await Promise.all(sourceImages.map(async (url, index) => {
           try { return await importImage({ url, accessToken, supabaseUrl, headers, userId: user.id, conceptId: concept.id, sequence: index + 1 }); }
@@ -187,10 +199,6 @@ export default async function handler(req, res) {
         }
       }
 
-      const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "generated" }) });
-      if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as generated.");
-      updatedArticleIds.push(article.id);
-      statuses[article.id] = "Generated";
     }
     return res.status(200).json({ updatedArticleIds, statuses, imagesByArticleId, restoredIdentifiers });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
