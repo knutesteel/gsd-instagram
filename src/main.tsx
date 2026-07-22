@@ -988,6 +988,9 @@ function Detail({
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
   const [busy, setBusy] = useState("");
   const [activeImage, setActiveImage] = useState(0);
+  const [generationPrompt, setGenerationPrompt] = useState("");
+  const [promptLoading, setPromptLoading] = useState(true);
+  const [promptLoadError, setPromptLoadError] = useState("");
   // Prefer app-storage copies. If any cannot be signed, retain the Drive image
   // URLs as a fallback instead of rendering an empty gallery.
   const renderedImages = Array.isArray(concept?.image_summary?.rendered_images) ? concept.image_summary.rendered_images.filter(Boolean) : [];
@@ -1000,6 +1003,32 @@ function Detail({
   const isTextOverview = concept?.image_summary?.origin === "text_overview";
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
+  useEffect(() => {
+    let cancelled = false;
+    setGenerationPrompt("");
+    setPromptLoadError("");
+    setPromptLoading(true);
+    void (async () => {
+      try {
+        if (!supabase) throw new Error("Supabase is not configured.");
+        const { data } = await supabase.auth.getSession();
+        if (!data.session) throw new Error("Please sign in again.");
+        const response = await fetch("/api/generation-prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
+          body: JSON.stringify({ articleId: story.id }),
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
+        if (!cancelled) setGenerationPrompt(String(result.prompt ?? ""));
+      } catch (error) {
+        if (!cancelled) setPromptLoadError(error instanceof Error ? error.message : "Couldn’t retrieve the generation prompt.");
+      } finally {
+        if (!cancelled) setPromptLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [story.id]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error"); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
@@ -1007,29 +1036,22 @@ function Detail({
   const generateContent = async () => {
     setBusy("generate");
     try {
-      if (!supabase) throw new Error("Supabase is not configured.");
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) throw new Error("Please sign in again.");
-      const response = await fetch("/api/generation-prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-        body: JSON.stringify({ articleId: story.id }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
+      if (promptLoading) throw new Error("Column J is still loading. Please try again in a moment.");
+      if (!generationPrompt) throw new Error(promptLoadError || "Column J is empty for this article.");
       let copied = false;
       if (navigator.clipboard?.writeText && document.hasFocus()) {
         try {
-          await navigator.clipboard.writeText(result.prompt);
+          // The prompt is preloaded so this call begins directly inside the
+          // button click's user-activation window.
+          await navigator.clipboard.writeText(generationPrompt);
           copied = true;
         } catch {
-          // Fall through to execCommand for browsers that restrict Clipboard API access.
+          // Fall through to the synchronous fallback when supported.
         }
       }
       if (!copied) {
-        window.focus();
         const textarea = document.createElement("textarea");
-        textarea.value = result.prompt;
+        textarea.value = generationPrompt;
         textarea.setAttribute("readonly", "");
         textarea.style.position = "fixed";
         textarea.style.opacity = "0";
@@ -1111,7 +1133,7 @@ function Detail({
         </div> : <>
           <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
           <button className={story.status === "Sent to Sheets" ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || story.status === "Sent to Sheets"}><FiExternalLink /> {story.status === "Sent to Sheets" ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
-          <button className="button wide" onClick={() => void generateContent()} disabled={Boolean(busy)}><FiCopy /> {busy === "generate" ? "Copying…" : "Generate Content"}</button>
+          <button className="button wide" onClick={() => void generateContent()} disabled={Boolean(busy) || promptLoading}><FiCopy /> {promptLoading ? "Loading Column J…" : busy === "generate" ? "Copying…" : "Generate Content"}</button>
         </>}
       </section>
     </section>
