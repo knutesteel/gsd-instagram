@@ -67,6 +67,19 @@ ${contentInstructions}`;
       // Only consume a number when this request created the article. Existing
       // articles retain their durable identifier when they are reanalyzed.
       if (articleRows[0]) nextIdentifier += 1;
+      // Older duplicate records can be rediscovered without an identifier.
+      // Assign one before returning so every analyzed article is immediately keyed.
+      if (!/^\d+$/.test(String(article.generation_identifier ?? "").trim())) {
+        const assignedIdentifier = String(nextIdentifier++);
+        const identifierUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(article.id)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+          method: "PATCH",
+          headers: { ...auth, ...jsonHeaders, Prefer: "return=representation" },
+          body: JSON.stringify({ generation_identifier: assignedIdentifier }),
+        });
+        if (!identifierUpdate.ok) return res.status(502).json({ error: "Couldn’t assign the article identifier." });
+        article = (await identifierUpdate.json())[0];
+      }
+      if (!article || !/^\d+$/.test(String(article.generation_identifier ?? "").trim())) return res.status(502).json({ error: "The article was saved without an identifier." });
       const imageSummary = { ...(item.image_summary ?? {}), ...(mode === "overview" ? { origin: "text_overview", source_overview: String(overview).trim() } : {}) };
       const conceptResponse = await fetch(`${supabaseUrl}/rest/v1/post_concepts?on_conflict=article_id`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ article_id: article.id, user_id: user.id, summary: item.summary.slice(0, 200), post_type: item.post_type, panel_count: item.panel_count ?? (item.post_type === "carousel" ? 5 : 1), image_summary: imageSummary, detailed_prompt: null, caption: item.caption, hashtags: normalizeHashtags(item.hashtags) }) });
       if (!conceptResponse.ok) return res.status(502).json({ error: `Couldn’t save the article analysis: ${await conceptResponse.text()}` });
