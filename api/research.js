@@ -12,6 +12,13 @@ const extractJson = (text) => {
 };
 const normalizeHashtags = (items) => Array.from(new Set(["#gsd-book", ...(Array.isArray(items) ? items : []).map((tag) => `#${String(tag).replace(/^#/, "").toLowerCase()}`).filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
 
+export const nextGenerationIdentifier = (rows) => {
+  const identifiers = rows
+    .map((row) => Number(String(row.generation_identifier ?? "").trim()))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  return identifiers.length ? Math.max(...identifiers) + 1 : 1;
+};
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -45,15 +52,21 @@ ${contentInstructions}`;
   try { candidates = extractJson(output); } catch { return res.status(502).json({ error: "Research response could not be read. Please try again." }); }
   const accepted = candidates.filter((item) => item.title && /^https:\/\//i.test(item.url) && (mode === "manual" || mode === "overview" || item.rank >= 61)).slice(0, mode === "manual" || mode === "overview" ? 1 : 3);
   if (accepted.length === 0) return res.status(422).json({ error: mode === "manual" ? "The article could not be analyzed into a usable GSD post concept." : mode === "overview" ? "The overview could not be turned into a usable GSD post suggestion." : "No qualifying stories were found. Try different topics." });
+  const identifierResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&select=generation_identifier`, { headers: auth });
+  if (!identifierResponse.ok) return res.status(502).json({ error: "Couldn’t determine the next article identifier." });
+  let nextIdentifier = nextGenerationIdentifier(await identifierResponse.json());
   const records = [];
   for (const item of accepted) {
     const fingerprint = createHash("sha256").update(item.url.split("#")[0].replace(/\/$/, "")).digest("hex");
-    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "new" }) });
+    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "new", generation_identifier: String(nextIdentifier) }) });
     if (!articleResponse.ok) return res.status(502).json({ error: `Couldn’t save a discovered article: ${await articleResponse.text()}` });
     const articleRows = articleResponse.ok ? await articleResponse.json() : [];
     let article = articleRows[0];
-    if (!article) { const existing = await fetch(`${supabaseUrl}/rest/v1/articles?select=id&url_fingerprint=eq.${fingerprint}`, { headers: auth }); const rows = existing.ok ? await existing.json() : []; article = rows[0]; }
+    if (!article) { const existing = await fetch(`${supabaseUrl}/rest/v1/articles?select=id,generation_identifier&user_id=eq.${encodeURIComponent(user.id)}&url_fingerprint=eq.${fingerprint}`, { headers: auth }); const rows = existing.ok ? await existing.json() : []; article = rows[0]; }
     if (article) {
+      // Only consume a number when this request created the article. Existing
+      // articles retain their durable identifier when they are reanalyzed.
+      if (articleRows[0]) nextIdentifier += 1;
       const imageSummary = { ...(item.image_summary ?? {}), ...(mode === "overview" ? { origin: "text_overview", source_overview: String(overview).trim() } : {}) };
       const conceptResponse = await fetch(`${supabaseUrl}/rest/v1/post_concepts?on_conflict=article_id`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ article_id: article.id, user_id: user.id, summary: item.summary.slice(0, 200), post_type: item.post_type, panel_count: item.panel_count ?? (item.post_type === "carousel" ? 5 : 1), image_summary: imageSummary, detailed_prompt: null, caption: item.caption, hashtags: normalizeHashtags(item.hashtags) }) });
       if (!conceptResponse.ok) return res.status(502).json({ error: `Couldn’t save the article analysis: ${await conceptResponse.text()}` });
