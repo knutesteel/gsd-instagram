@@ -1,6 +1,8 @@
 import { createPrivateKey, sign } from "node:crypto";
 
-const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
+// Generation has one canonical sheet. A stale Vercel override previously made
+// rollback search a different spreadsheet from Send for Generation.
+const spreadsheetId = "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
 const statusMap = {
   New: { app: "new", sheet: "New" },
@@ -21,6 +23,36 @@ async function googleAccessToken() {
   const response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${unsigned}.${signature}` }) });
   if (!response.ok) throw new Error("Couldn’t authenticate the Google Sheets connection.");
   return (await response.json()).access_token;
+}
+
+async function findSheetRow(accessToken, identifier) {
+  const lookup = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!lookup.ok) throw new Error("Couldn’t read the generation Google Sheet.");
+  const rows = (await lookup.json()).values ?? [];
+  const foundIndex = rows.findIndex((row, index) => index > 0 && String(row[3] || "").trim() === String(identifier).trim());
+  return foundIndex < 0 ? null : foundIndex + 1;
+}
+
+async function deleteSheetRow(accessToken, rowNumber) {
+  const metadata = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=${encodeURIComponent("sheets(properties(sheetId,title))")}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+  if (!metadata.ok) throw new Error("Couldn’t read the generation worksheet configuration.");
+  const sheet = (await metadata.json()).sheets?.find((item) => item.properties?.title === "Sheet1");
+  if (!sheet) throw new Error("Couldn’t find the Sheet1 worksheet.");
+
+  const deletion = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ requests: [{ deleteDimension: { range: {
+      sheetId: sheet.properties.sheetId,
+      dimension: "ROWS",
+      startIndex: rowNumber - 1,
+      endIndex: rowNumber,
+    } } }] }),
+  });
+  if (!deletion.ok) throw new Error("Couldn’t delete the article row from the generation Google Sheet.");
 }
 
 export default async function handler(req, res) {
@@ -51,33 +83,28 @@ export default async function handler(req, res) {
     // before falling back to the saved row number so the wrong story is never updated.
     if (article.generation_identifier) {
       accessToken = await googleAccessToken();
-      const lookup = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!B:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
-      if (!lookup.ok) throw new Error("Couldn’t find the article in the Google Sheet.");
-      const rows = (await lookup.json()).values ?? [];
-      const foundIndex = rows.findIndex((row) => String(row[2] || "").trim() === String(article.generation_identifier).trim());
-      if (foundIndex < 0) throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
-      sheetRow = foundIndex + 1;
+      sheetRow = await findSheetRow(accessToken, article.generation_identifier);
+      if (!sheetRow) throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
     }
 
     if (sheetRow) {
       accessToken ||= await googleAccessToken();
-      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${sheetRow}`)}?valueInputOption=USER_ENTERED`, {
-        method: "PUT",
-        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ values: [[target.sheet]] }),
-      });
-      if (!update.ok) throw new Error("Couldn’t update the status in the Google Sheet.");
-      if (sheetRow !== article.generation_sheet_row) {
-        await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
-          method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_sheet_row: sheetRow }),
+      if (status === "New") {
+        await deleteSheetRow(accessToken, sheetRow);
+      } else {
+        const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${sheetRow}`)}?valueInputOption=USER_ENTERED`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ values: [[target.sheet]] }),
         });
+        if (!update.ok) throw new Error("Couldn’t update the status in the Google Sheet.");
       }
     }
 
     const statusUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
       headers: { ...headers, Prefer: "return=minimal" },
-      body: JSON.stringify({ status: target.app }),
+      body: JSON.stringify({ status: target.app, ...(status === "New" ? { generation_sheet_row: null } : { generation_sheet_row: sheetRow }) }),
     });
     if (!statusUpdate.ok) throw new Error("Couldn’t save the status in the app.");
     return res.status(200).json({ status });
