@@ -54,20 +54,16 @@ async function nextSequentialIdentifier(accessToken, databaseIdentifiers = []) {
   return String((current.length ? Math.max(...current) : 0) + 1);
 }
 const valueKey = (value) => String(value || "").trim().toLocaleLowerCase();
-async function existingSheetRow(accessToken, article) {
-  // Use the same range and read shape as sync-sheet-generation. That endpoint
-  // is already proven against the production Sheet and service account.
+async function existingSheetRow(accessToken, identifier) {
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
     "Existing generation row lookup",
   );
   if (!response.ok) throw new Error(await googleError(response, "Couldn’t check the existing generation row"));
-  const rows = ((await response.json()).values || []).slice(1);
-  const url = valueKey(article.source_url || article.canonical_url);
-  const title = valueKey(article.title);
-  const index = rows.findIndex((row) => (url && valueKey(row[4]) === url) || (title && valueKey(row[2]) === title));
-  return index < 0 ? null : { row: index + 2, identifier: String(rows[index][3] || "").trim() };
+  const rows = (await response.json()).values || [];
+  const index = rows.findIndex((row, rowIndex) => rowIndex > 0 && String(row[0] || "").trim() === String(identifier).trim());
+  return index < 0 ? null : { row: index + 1 };
 }
 async function sheetRowForIdentifier(accessToken, identifier) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -94,21 +90,6 @@ export function rowNumberFromUpdatedRange(updatedRange) {
   return Number.isInteger(row) && row > 0 ? row : null;
 }
 const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nCreate every output image at exactly 1080 pixels wide by 1440 pixels high (3:4 portrait), the default Instagram size. Panel 1 must directly introduce the article and show Hank reading a physical newspaper whose visible front-page headline is exactly: “${title}”. The squirrel responds to the headline. For Panels 2 onward, let Hank and the squirrel have a natural, funny conversation inspired by the article’s theme or humane takeaway. Do not mechanically restate the article or force its setting and props into every later panel; a natural setting change and conversational tangent are welcome. Keep both characters present and speaking in every panel, with the last panel landing a warm, practical thought. Use the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
-
-async function copyPromptFromPreviousRow(accessToken, destinationRow) {
-  if (!destinationRow || destinationRow <= 2) return;
-  const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-    method: "POST",
-    headers: { ...json, Authorization: `Bearer ${accessToken}` },
-    body: JSON.stringify({ requests: [{ copyPaste: {
-      source: { sheetId: 0, startRowIndex: destinationRow - 2, endRowIndex: destinationRow - 1, startColumnIndex: 9, endColumnIndex: 10 },
-      destination: { sheetId: 0, startRowIndex: destinationRow - 1, endRowIndex: destinationRow, startColumnIndex: 9, endColumnIndex: 10 },
-      pasteType: "PASTE_NORMAL",
-      pasteOrientation: "NORMAL",
-    } }] }),
-  });
-  if (!response.ok) throw new Error("Couldn’t copy the Prompt from the previous Google Sheets row.");
-}
 
 async function formatAndSortSheet(accessToken) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
@@ -157,19 +138,18 @@ export default async function handler(req, res) {
   try {
     const accessToken = await googleAccessToken();
     const content = concept.image_summary.content;
-    const existing = await existingSheetRow(accessToken, article);
     const identifiersResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&select=generation_identifier`, { headers: auth });
     if (!identifiersResponse.ok) throw new Error("Couldn’t determine the next app identifier.");
     const databaseIdentifiers = (await identifiersResponse.json()).map((row) => row.generation_identifier);
     // The app/database identifier is authoritative. A legacy Sheet identifier
     // is used only when the app record does not yet have a numeric identifier.
     const identifier = numericIdentifier(article.generation_identifier)
-      || numericIdentifier(existing?.identifier)
       || await nextSequentialIdentifier(accessToken, databaseIdentifiers);
+    const existing = await existingSheetRow(accessToken, identifier);
     const isTextOverview = concept.image_summary?.origin === "text_overview";
     const url = isTextOverview ? "" : article.source_url || article.canonical_url || "";
     const type = typeLabel(concept.post_type);
-    const values = [[
+    const rowValues = [
       new Date().toISOString().slice(0, 10),
       "Pending",
       article.title,
@@ -179,19 +159,18 @@ export default async function handler(req, res) {
       concept.panel_count || 1,
       type,
       content,
-      "",
+      generationPrompt({ title: article.title, url, panelCount: concept.panel_count || 1, type, content }),
       concept.caption || "",
       Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
-    ]];
+      "", "", "", "", "",
+    ];
     if (existing) {
-      // Preserve column J (Prompt), which is owned by the Sheet workflow.
-      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
-        method: "POST",
+      // Identifier is the row key. Replace the complete row so stale generated
+      // output in M:Q cannot survive a resend.
+      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${existing.row}:Q${existing.row}`)}?valueInputOption=USER_ENTERED`, {
+        method: "PUT",
         headers: { ...json, Authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ valueInputOption: "USER_ENTERED", data: [
-          { range: `Sheet1!A${existing.row}:I${existing.row}`, values: [values[0].slice(0, 9)] },
-          { range: `Sheet1!K${existing.row}:L${existing.row}`, values: [[values[0][10], values[0][11]]] },
-        ] }),
+        body: JSON.stringify({ values: [rowValues] }),
       });
       if (!update.ok) throw new Error(await googleError(update, "Couldn’t update the existing Google Sheets row"));
       await formatAndSortSheet(accessToken);
@@ -208,7 +187,7 @@ export default async function handler(req, res) {
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method: "POST",
       headers: { ...json, Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ values }),
+      body: JSON.stringify({ values: [rowValues.slice(0, 12)] }),
     });
     if (!response.ok) throw new Error(await googleError(response, "Couldn’t add the row to Google Sheets"));
     const result = await response.json();
@@ -217,7 +196,6 @@ export default async function handler(req, res) {
     // when that response field is missing or formatted differently.
     const destinationRow = rowNumberFromUpdatedRange(result.updates?.updatedRange)
       || await verifySheetRow(accessToken, identifier, article.title);
-    await copyPromptFromPreviousRow(accessToken, destinationRow);
     await extendSheetFilter({ accessToken, spreadsheetId, lastRow: destinationRow });
     await formatAndSortSheet(accessToken);
     const sortedRow = await verifySheetRow(accessToken, identifier, article.title);
