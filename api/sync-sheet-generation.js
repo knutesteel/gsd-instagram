@@ -111,7 +111,11 @@ export default async function handler(req, res) {
     const sheet = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!sheet.ok) throw new Error("Couldn’t read the generation sheet.");
     const rows = (await sheet.json()).values ?? [];
-    const restoredIdentifiers = await restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
+    // Sheet status reconciliation is the primary responsibility of this route.
+    // Row restoration is maintenance work and must never prevent an existing
+    // identifier from moving to Generated/Approved/Posted.
+    let restoredIdentifiers = [];
+    let restorationWarning = null;
     const syncedRows = rows.slice(1).filter((row) => ["generated", "approved", "posted"].includes(String(row[1]).trim().toLowerCase()) && row[3]);
     if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {}, restoredIdentifiers });
     const updatedArticleIds = [];
@@ -162,8 +166,19 @@ export default async function handler(req, res) {
         // has a durable copy in app storage.
         && (!sourceImages.length || importedImageCount >= sourceImages.length);
       if (alreadySynced) continue;
-      // Save the Generated status and all visible content first. Image import is best-effort
-      // so a Drive permission delay never prevents the dashboard from updating.
+      // The sheet status is authoritative. Persist it before any concept or
+      // image work so malformed content cannot leave the dashboard stale.
+      const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
+        method: "PATCH",
+        headers: { ...headers, Prefer: "return=minimal" },
+        body: JSON.stringify({ status: "generated" }),
+      });
+      if (!articleUpdate.ok) throw new Error(`Couldn’t mark identifier #${identifier} as generated.`);
+      updatedArticleIds.push(article.id);
+      statuses[article.id] = "Generated";
+
+      // Generated content and images are best-effort enrichments. A failure
+      // here must not roll back or conceal the authoritative status update.
       const conceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
         method: "PATCH",
         headers: { ...headers, Prefer: "return=minimal" },
@@ -173,19 +188,7 @@ export default async function handler(req, res) {
           hashtags,
         }),
       });
-      if (!conceptUpdate.ok) throw new Error("Couldn’t save the generated post content.");
-
-      // The sheet status is authoritative. Persist it before attempting any
-      // best-effort Drive downloads so a slow, unavailable, or private image
-      // cannot leave the dashboard stuck at Sent to Sheets.
-      const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
-        method: "PATCH",
-        headers: { ...headers, Prefer: "return=minimal" },
-        body: JSON.stringify({ status: "generated" }),
-      });
-      if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as generated.");
-      updatedArticleIds.push(article.id);
-      statuses[article.id] = "Generated";
+      if (!conceptUpdate.ok) continue;
 
       if (sourceImages.length) {
         const imported = (await Promise.all(sourceImages.map(async (url, index) => {
@@ -200,6 +203,11 @@ export default async function handler(req, res) {
       }
 
     }
-    return res.status(200).json({ updatedArticleIds, statuses, imagesByArticleId, restoredIdentifiers });
+    try {
+      restoredIdentifiers = await restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
+    } catch (error) {
+      restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
+    }
+    return res.status(200).json({ updatedArticleIds, statuses, imagesByArticleId, restoredIdentifiers, restorationWarning });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
 }
