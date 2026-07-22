@@ -1005,8 +1005,6 @@ function Detail({
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
   const send = async () => { setBusy("sheet"); try { const result = await sendForGeneration(story.id, values) as { warnings?: string[] }; notify(result.warnings?.length ? `Article saved. ${result.warnings.join(" ")}` : "Article sent to the Google Sheet for generation.", result.warnings?.length ? "error" : "success"); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet.", "error"); } finally { setBusy(""); } };
   const generateContent = async () => {
-    const chatWindow = window.open("https://chatgpt.com/g/g-p-69e8effb73588191acaccbaed49a9d96/c/6a5fd350-e1f8-83ea-a391-a1e3cd4b4dcb", "_blank");
-    if (chatWindow) chatWindow.opener = null;
     setBusy("generate");
     try {
       if (!supabase) throw new Error("Supabase is not configured.");
@@ -1019,7 +1017,30 @@ function Detail({
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
-      await navigator.clipboard.writeText(result.prompt);
+      let copied = false;
+      if (navigator.clipboard?.writeText && document.hasFocus()) {
+        try {
+          await navigator.clipboard.writeText(result.prompt);
+          copied = true;
+        } catch {
+          // Fall through to execCommand for browsers that restrict Clipboard API access.
+        }
+      }
+      if (!copied) {
+        window.focus();
+        const textarea = document.createElement("textarea");
+        textarea.value = result.prompt;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        copied = document.execCommand("copy");
+        textarea.remove();
+      }
+      if (!copied) throw new Error("The browser blocked clipboard access. Keep this page active and click Generate Content again.");
+      const chatWindow = window.open("https://chatgpt.com/g/g-p-69e8effb73588191acaccbaed49a9d96/c/6a5fd350-e1f8-83ea-a391-a1e3cd4b4dcb", "_blank", "noopener,noreferrer");
       notify(chatWindow ? "Column J copied to the clipboard and ChatGPT opened." : "Column J copied. Your browser blocked the new ChatGPT window.", chatWindow ? "success" : "error");
     } catch (error) {
       notify(error instanceof Error ? error.message : "Couldn’t copy the generation prompt.", "error");
