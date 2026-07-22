@@ -13,6 +13,8 @@ const statusMap = {
   Archived: { app: "discarded", sheet: "Archived" },
 };
 
+export const statusRequiresSheetLookup = (status) => status !== "Archived";
+
 async function googleAccessToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -76,6 +78,18 @@ export default async function handler(req, res) {
     if (!articleResponse.ok) throw new Error("Couldn’t find the article.");
     const article = (await articleResponse.json())[0];
     if (!article) return res.status(404).json({ error: "Article not found." });
+
+    // Archiving is an app-only action. A new article has never been written to
+    // Google Sheets, so its identifier must not be used to require a sheet row.
+    if (!statusRequiresSheetLookup(status)) {
+      const archiveUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+        method: "PATCH",
+        headers: { ...headers, Prefer: "return=minimal" },
+        body: JSON.stringify({ status: target.app }),
+      });
+      if (!archiveUpdate.ok) throw new Error("Couldn’t save the status in the app.");
+      return res.status(200).json({ status, appOnly: true });
+    }
 
     let sheetRow = article.generation_sheet_row;
     let accessToken = null;
