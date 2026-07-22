@@ -130,8 +130,8 @@
 }
 .detail-editor-fields > .field:nth-child(1),
 .detail-editor-fields > .field:nth-child(2),
-.detail-editor-fields > .field:nth-child(5),
-.detail-editor-fields > .field:nth-child(6) { grid-column: 1 / -1; }
+.detail-editor-fields > .field:nth-child(4),
+.detail-editor-fields > .field:nth-child(5) { grid-column: 1 / -1; }
 .detail-metadata-row { display: grid; grid-column: 1 / -1; grid-template-columns: minmax(260px, 1fr) minmax(150px, .55fr) 110px 110px; gap: 14px 18px; }
 .detail-metadata-row .field { min-width: 0; }
 .summary-editor { min-height: 42px !important; }
