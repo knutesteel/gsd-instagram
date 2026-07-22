@@ -88,6 +88,11 @@ async function verifySheetRow(accessToken, identifier, title) {
   if (index < 0) throw new Error("Google Sheets did not contain the article after the write, so the send was not marked successful.");
   return index + 1;
 }
+export function rowNumberFromUpdatedRange(updatedRange) {
+  const match = String(updatedRange || "").match(/![A-Z]+(\d+)(?::[A-Z]+\d+)?$/i);
+  const row = match ? Number(match[1]) : NaN;
+  return Number.isInteger(row) && row > 0 ? row : null;
+}
 const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nCreate every output image at exactly 1080 pixels wide by 1440 pixels high (3:4 portrait), the default Instagram size. Panel 1 must directly introduce the article and show Hank reading a physical newspaper whose visible front-page headline is exactly: “${title}”. The squirrel responds to the headline. For Panels 2 onward, let Hank and the squirrel have a natural, funny conversation inspired by the article’s theme or humane takeaway. Do not mechanically restate the article or force its setting and props into every later panel; a natural setting change and conversational tangent are welcome. Keep both characters present and speaking in every panel, with the last panel landing a warm, practical thought. Use the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
 
 async function copyPromptFromPreviousRow(accessToken, destinationRow) {
@@ -197,6 +202,7 @@ export default async function handler(req, res) {
         body: JSON.stringify({ generation_identifier: identifier, generation_sheet_row: sortedRow }),
       });
       if (!rowUpdate.ok) throw new Error("Couldn’t synchronize the existing Google Sheets row reference.");
+      await extendSheetFilter({ accessToken, spreadsheetId, lastRow: sortedRow });
       return res.status(200).json({ reusedExistingRow: true, sheetRow: sortedRow, identifier });
     }
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
@@ -206,7 +212,11 @@ export default async function handler(req, res) {
     });
     if (!response.ok) throw new Error(await googleError(response, "Couldn’t add the row to Google Sheets"));
     const result = await response.json();
-    const destinationRow = Number(String(result.updates?.updatedRange ?? "").match(/!A(\d+):/i)?.[1]);
+    // Google does not guarantee that append responses always contain the same
+    // updatedRange shape. Verify the write and use the actual row in the sheet
+    // when that response field is missing or formatted differently.
+    const destinationRow = rowNumberFromUpdatedRange(result.updates?.updatedRange)
+      || await verifySheetRow(accessToken, identifier, article.title);
     await copyPromptFromPreviousRow(accessToken, destinationRow);
     await extendSheetFilter({ accessToken, spreadsheetId, lastRow: destinationRow });
     await formatAndSortSheet(accessToken);
