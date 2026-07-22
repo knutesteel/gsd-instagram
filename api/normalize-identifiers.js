@@ -79,6 +79,14 @@ export default async function handler(req, res) {
       if (title && titleCounts.get(title) === 1) uniqueByTitle.set(title, article);
     }
     const desiredId = new Map();
+    const claimedIdentifiers = new Set();
+    for (const article of articles) {
+      const stored = String(article.generation_identifier || "").trim();
+      if (/^\d+$/.test(stored) && Number(stored) > 0 && !claimedIdentifiers.has(stored)) {
+        desiredId.set(article.id, stored);
+        claimedIdentifiers.add(stored);
+      }
+    }
     const matchedArticleIds = new Set();
     dataRows.forEach((row, index) => {
       // Match content first. The app database is authoritative for an existing
@@ -88,16 +96,26 @@ export default async function handler(req, res) {
       matchedArticleIds.add(article.id);
       const stored = String(article.generation_identifier || "").trim();
       const sheetValue = String(row[3] || "").trim();
-      if (/^\d+$/.test(stored)) desiredId.set(article.id, stored);
-      else if (/^\d+$/.test(sheetValue)) desiredId.set(article.id, sheetValue);
-      else desiredId.set(article.id, String(nextId++));
+      if (desiredId.has(article.id)) return;
+      if (/^\d+$/.test(sheetValue) && Number(sheetValue) > 0 && !claimedIdentifiers.has(sheetValue)) {
+        desiredId.set(article.id, sheetValue);
+        claimedIdentifiers.add(sheetValue);
+      }
     });
+    // Every app record receives an identifier, including New and Archived
+    // records that have never been sent to the generation sheet.
+    for (const article of articles) {
+      if (desiredId.has(article.id)) continue;
+      while (claimedIdentifiers.has(String(nextId))) nextId += 1;
+      const identifier = String(nextId++);
+      desiredId.set(article.id, identifier);
+      claimedIdentifiers.add(identifier);
+    }
     // A previous send can have marked an item Sent to Sheets after a transient append failure.
     // Repair those rows here, matching by title as well as identifier so each article is restored once.
     const missingSent = articles.filter((article) => article.status === "sent_to_sheets" && !matchedArticleIds.has(article.id));
     for (const article of missingSent) {
-      const identifier = /^\d+$/.test(String(article.generation_identifier || "")) && !numericIds.includes(Number(article.generation_identifier))
-        ? String(article.generation_identifier) : String(nextId++);
+      const identifier = desiredId.get(article.id);
       desiredId.set(article.id, identifier);
       const append = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ values: sheetValues(article, identifier) }) });
       if (!append.ok) throw new Error(`Couldn’t restore #${identifier} to the Google Sheet.`);
