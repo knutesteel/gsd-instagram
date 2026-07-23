@@ -746,7 +746,7 @@ function ArticleList({
       {groups.map(([status, stories]) => <section className="article-status-group" key={status}>
         <header><h2>{status}</h2><span>{stories.length} {stories.length === 1 ? "article" : "articles"}</span></header>
         <div className="article-list-grid">{stories.map((item) => <article className="article-list-card" key={item.id}>
-          <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span></div>
+          <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}{item.generationIdentifier ? ` (${item.generationIdentifier})` : ""}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span></div>
           <ArticleThumbnail item={item} />
         </article>)}</div>
       </section>)}
