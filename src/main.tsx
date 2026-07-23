@@ -32,6 +32,7 @@ type Screen =
   | "detail"
   | "archive";
 type Toast = { message: string; kind: "success" | "error" };
+type StatusMismatch = { identifier: string; appStatus: string; sheetStatus: string };
 type Notify = (message: string, kind?: Toast["kind"]) => void;
 type Story = {
   id: string;
@@ -111,6 +112,7 @@ function App() {
   const [searching, setSearching] = useState(false);
   const [concept, setConcept] = useState<Concept | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [statusMismatches, setStatusMismatches] = useState<StatusMismatch[]>([]);
   const toastTimer = useRef<number | null>(null);
   const [authReady, setAuthReady] = useState(!supabaseConfigured);
   const [userId, setUserId] = useState<string | null>(null);
@@ -290,12 +292,13 @@ function App() {
     return result as { updatedRange?: string };
   };
   const syncGeneratedContent = async () => {
-    if (!supabase || syncingGeneratedContent.current) return { updatedArticleIds: [], statuses: {}, imagesByArticleId: {} };
+    if (!supabase || syncingGeneratedContent.current) return { updatedArticleIds: [], statuses: {}, statusMismatches: [], imagesByArticleId: {} };
     syncingGeneratedContent.current = true;
     try {
     const { data } = await supabase.auth.getSession(); if (!data.session) return;
     const response = await fetch("/api/sync-sheet-generation", { method: "POST", headers: { Authorization: `Bearer ${data.session.access_token}` } });
     const result = await response.json(); if (!response.ok) throw new Error(result.error ?? "Couldn’t sync generated content.");
+    setStatusMismatches(Array.isArray(result.statusMismatches) ? result.statusMismatches : []);
     const ids: string[] = result.updatedArticleIds ?? [];
     await loadStories();
     const imagesByArticleId = (result.imagesByArticleId ?? {}) as Record<string, string[]>;
@@ -411,6 +414,7 @@ function App() {
         {screen === "dashboard" && (
           <Dashboard
             items={proposed}
+            statusMismatches={statusMismatches}
             discover={() => setScreen("discover")}
             select={(id) => {
               setArticleStatusFilter("all");
@@ -591,6 +595,7 @@ function Guidance() {
 
 function Dashboard({
   items,
+  statusMismatches,
   discover,
   select,
   onStatus,
@@ -600,6 +605,7 @@ function Dashboard({
   setStatusFilter,
 }: {
   items: Story[];
+  statusMismatches: StatusMismatch[];
   discover: () => void;
   select: (id: string) => void;
   onStatus: (id: string, status: Story["status"]) => void;
@@ -644,6 +650,17 @@ function Dashboard({
           <button className="button primary" onClick={discover}><FiPlus /> Find fresh stories</button>
         </div>
       </header>
+      {statusMismatches.length > 0 && (
+        <div className="status-mismatch-banner" role="alert">
+          <div>
+            <b>Google Sheet status mismatch detected</b>
+            {statusMismatches.map((mismatch) => (
+              <p key={mismatch.identifier}>Item #{mismatch.identifier} is {mismatch.appStatus} in the app, but {mismatch.sheetStatus} in the spreadsheet.</p>
+            ))}
+          </div>
+          <button type="button" onClick={refreshStatus}><FiRefreshCw /> Recheck now</button>
+        </div>
+      )}
       <div className="filter-row">
         <label>
           <FiSearch />
