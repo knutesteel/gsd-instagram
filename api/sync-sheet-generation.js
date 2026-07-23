@@ -12,6 +12,15 @@ const driveImageUrl = (url) => {
 };
 const extensionFor = (contentType) => contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
 const typeLabel = (postType) => ({ carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" }[postType] || postType || "Carousel");
+const normalizeSheetStatus = (value) => {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (normalized === "pending" || normalized === "sent to sheets") return { database: "sent_to_sheets", label: "Sent to Sheets" };
+  if (normalized === "generated") return { database: "generated", label: "Generated" };
+  if (normalized === "approved" || normalized === "approved to post") return { database: "approved_to_post", label: "Approved" };
+  if (normalized === "posted") return { database: "posted", label: "Posted" };
+  return null;
+};
+const appStatusLabel = (value) => ({ sent_to_sheets: "Sent to Sheets", generated: "Generated", approved_to_post: "Approved", posted: "Posted", new: "New", discarded: "Archived" }[value] || String(value || "Unknown"));
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -116,10 +125,11 @@ export default async function handler(req, res) {
     // identifier from moving to Generated/Approved/Posted.
     let restoredIdentifiers = [];
     let restorationWarning = null;
-    const syncedRows = rows.slice(1).filter((row) => ["generated", "approved", "posted"].includes(String(row[1]).trim().toLowerCase()) && row[3]);
-    if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {}, restoredIdentifiers });
+    const syncedRows = rows.slice(1).filter((row) => normalizeSheetStatus(row[1]) && row[3]);
+    if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {}, statusMismatches: [], restoredIdentifiers });
     const updatedArticleIds = [];
     const statuses = {};
+    const statusMismatches = [];
     const imagesByArticleId = {};
     for (const row of syncedRows) {
       const identifier = String(row[3]).trim();
@@ -129,21 +139,35 @@ export default async function handler(req, res) {
       const concept = article?.post_concepts?.[0];
       if (!concept) continue;
 
-      const sheetStatus = String(row[1]).trim().toLowerCase();
+      const normalizedStatus = normalizeSheetStatus(row[1]);
+      if (!normalizedStatus) continue;
+      const sheetStatus = normalizedStatus.database;
+      if (article.status !== sheetStatus) {
+        statusMismatches.push({ identifier, appStatus: appStatusLabel(article.status), sheetStatus: normalizedStatus.label });
+      }
       if (sheetStatus === "posted") {
         if (article.status === "posted") continue;
-        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "posted" }) });
+        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "posted" }) });
         if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as posted.");
         updatedArticleIds.push(article.id);
         statuses[article.id] = "Posted";
         continue;
       }
-      if (sheetStatus === "approved") {
+      if (sheetStatus === "approved_to_post") {
         if (article.status === "approved_to_post") continue;
-        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "approved_to_post" }) });
+        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "approved_to_post" }) });
         if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as approved.");
         updatedArticleIds.push(article.id);
         statuses[article.id] = "Approved";
+        continue;
+      }
+
+      if (sheetStatus === "sent_to_sheets") {
+        if (article.status === "sent_to_sheets") continue;
+        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "sent_to_sheets" }) });
+        if (!articleUpdate.ok) throw new Error(`Couldn’t reconcile identifier #${identifier} with the Google Sheet.`);
+        updatedArticleIds.push(article.id);
+        statuses[article.id] = "Sent to Sheets";
         continue;
       }
 
@@ -208,6 +232,6 @@ export default async function handler(req, res) {
     } catch (error) {
       restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
     }
-    return res.status(200).json({ updatedArticleIds, statuses, imagesByArticleId, restoredIdentifiers, restorationWarning });
+    return res.status(200).json({ updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
 }
