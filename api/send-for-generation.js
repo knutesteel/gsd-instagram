@@ -89,7 +89,11 @@ export function verifyGenerationValues(actual, expected) {
   const padded = Array.from({ length: 17 }, (_, index) => cellValue(actual[index]));
   const wanted = Array.from({ length: 17 }, (_, index) => cellValue(expected[index]));
   const mismatches = [];
-  for (let index = 0; index < 12; index += 1) if (padded[index] !== wanted[index]) mismatches.push(index + 1);
+  for (let index = 0; index < 12; index += 1) {
+    // Column J contains a formula, so the values API returns its calculated
+    // result. The exact formula is verified separately through grid data.
+    if (index !== 9 && padded[index] !== wanted[index]) mismatches.push(index + 1);
+  }
   for (let index = 12; index < 17; index += 1) if (padded[index] !== "") mismatches.push(index + 1);
   return { ok: mismatches.length === 0 && padded[3] === wanted[3], mismatches };
 }
@@ -98,7 +102,18 @@ export function rowNumberFromUpdatedRange(updatedRange) {
   const row = match ? Number(match[1]) : NaN;
   return Number.isInteger(row) && row > 0 ? row : null;
 }
-const generationPrompt = ({ title, url, panelCount, type, content }) => `Create a ${panelCount || 1}-panel ${type} Instagram post based on ${url} with the following content:\n\n${content}\n\nCreate every output image at exactly 1080 pixels wide by 1440 pixels high (3:4 portrait), the default Instagram size. Panel 1 must directly introduce the article and show Hank reading a physical newspaper whose visible front-page headline is exactly: “${title}”. The squirrel responds to the headline. For Panels 2 onward, let Hank and the squirrel have a natural, funny conversation inspired by the article’s theme or humane takeaway. Do not mechanically restate the article or force its setting and props into every later panel; a natural setting change and conversational tangent are welcome. Keep both characters present and speaking in every panel, with the last panel landing a warm, practical thought. Use the GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the Google Sheet row for this article.`;
+export const generationPromptFormula = (row) => `="Create a "&G${row}&" "&H${row}&" Instagrage Post based on "&E${row}&" "&" with the following content: "&I${row}&" Create every output image at exactly 1080 pixels wide by 1440 pixels high (3:4 portrait), the default Instagram size. Use he GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hastags (maximum of 4) in the google sheet : 
+https://docs.google.com/spreadsheets/d/1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ/edit?gid=0#gid=0, populating the relevant fields for the row with Identifyerer value of "&D${row}`;
+
+async function readGenerationPromptFormula(accessToken, row) {
+  const response = await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?includeGridData=true&ranges=${encodeURIComponent(`Sheet1!J${row}`)}&fields=sheets(data(rowData(values(userEnteredValue))))`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    "Generation prompt formula verification",
+  );
+  if (!response.ok) throw new Error(await googleError(response, "Couldn’t verify the generation prompt formula"));
+  return (await response.json())?.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0]?.userEnteredValue?.formulaValue || "";
+}
 
 async function formatAndSortSheet(accessToken) {
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
@@ -165,6 +180,7 @@ export default async function handler(req, res) {
     const isTextOverview = concept.image_summary?.origin === "text_overview";
     const url = isTextOverview ? "" : article.source_url || article.canonical_url || "";
     const type = typeLabel(concept.post_type);
+    const promptFormula = generationPromptFormula(intendedRow);
     const rowValues = [
       new Date().toISOString().slice(0, 10),
       "Pending",
@@ -175,7 +191,7 @@ export default async function handler(req, res) {
       concept.panel_count || 1,
       type,
       content,
-      generationPrompt({ title: article.title, url, panelCount: concept.panel_count || 1, type, content }),
+      "",
       concept.caption || "",
       Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
       "", "", "", "", "",
@@ -188,10 +204,20 @@ export default async function handler(req, res) {
     }, "Generation row write");
     if (!write.ok) throw new Error(await googleError(write, "Couldn’t write the Google Sheets row"));
 
+    stage = "write-prompt-formula";
+    const promptWrite = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!J${intendedRow}`)}?valueInputOption=USER_ENTERED`, {
+      method: "PUT",
+      headers: { ...json, Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ range: `Sheet1!J${intendedRow}`, majorDimension: "ROWS", values: [[promptFormula]] }),
+    }, "Generation prompt formula write");
+    if (!promptWrite.ok) throw new Error(await googleError(promptWrite, "Couldn’t write the generation prompt formula"));
+
     stage = "verify-row";
     const actualValues = await readExactSheetRow(accessToken, intendedRow);
     const verification = verifyGenerationValues(actualValues, rowValues);
     if (!verification.ok) throw new Error(`Google Sheets verification failed for columns ${verification.mismatches.join(", ") || "unknown"}.`);
+    const actualPromptFormula = await readGenerationPromptFormula(accessToken, intendedRow);
+    if (actualPromptFormula !== promptFormula) throw new Error("Google Sheets verification failed for the Column J formula.");
 
     const warnings = [];
     stage = "format-sort";
