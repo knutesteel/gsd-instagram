@@ -26,8 +26,12 @@ async function googleAccessToken() {
 }
 
 export function promptForIdentifier(rows, identifier) {
-  const match = rows.find((row, index) => index > 0 && String(row[0] ?? "").trim() === String(identifier ?? "").trim());
-  return String(match?.[6] ?? "");
+  const normalizedIdentifier = String(identifier ?? "").trim();
+  const match = rows.find((row) => String(row[0] ?? "").trim() === normalizedIdentifier);
+  return {
+    found: Boolean(match),
+    prompt: String(match?.[6] ?? ""),
+  };
 }
 
 export default async function handler(req, res) {
@@ -51,10 +55,20 @@ export default async function handler(req, res) {
 
   try {
     const accessToken = await googleAccessToken();
-    const sheetResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:J")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const sheetResponse = await fetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:J")}?valueRenderOption=FORMATTED_VALUE&_=${Date.now()}`,
+      {
+        cache: "no-store",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Cache-Control": "no-cache",
+        },
+      },
+    );
     if (!sheetResponse.ok) throw new Error("Couldn’t read the generation prompt from Google Sheets.");
-    const prompt = promptForIdentifier((await sheetResponse.json()).values ?? [], article.generation_identifier);
-    if (!prompt.trim()) return res.status(404).json({ error: `Column J is empty or no sheet row was found for identifier ${article.generation_identifier}.` });
+    const { found, prompt } = promptForIdentifier((await sheetResponse.json()).values ?? [], article.generation_identifier);
+    if (!found) return res.status(404).json({ error: `No sheet row was found for identifier ${article.generation_identifier}.` });
+    if (!prompt.trim()) return res.status(404).json({ error: `Column J is empty for identifier ${article.generation_identifier}.` });
     return res.status(200).json({ prompt });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t retrieve the generation prompt." });
