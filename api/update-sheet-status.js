@@ -13,7 +13,8 @@ const statusMap = {
   Archived: { app: "discarded", sheet: "Archived" },
 };
 
-export const statusRequiresSheetLookup = (status) => status !== "Archived";
+export const statusRequiresSheetLookup = (status, hasIdentifier = false) =>
+  status !== "Archived" || hasIdentifier;
 
 async function googleAccessToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -79,9 +80,10 @@ export default async function handler(req, res) {
     const article = (await articleResponse.json())[0];
     if (!article) return res.status(404).json({ error: "Article not found." });
 
-    // Archiving is an app-only action. A new article has never been written to
-    // Google Sheets, so its identifier must not be used to require a sheet row.
-    if (!statusRequiresSheetLookup(status)) {
+    // A brand-new article can be archived without touching Sheets. If the
+    // article has an identifier, remove any matching sheet row by Identifier;
+    // a missing row is valid and does not block archiving.
+    if (!statusRequiresSheetLookup(status, Boolean(article.generation_identifier))) {
       const archiveUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
         method: "PATCH",
         headers: { ...headers, Prefer: "return=minimal" },
@@ -98,12 +100,12 @@ export default async function handler(req, res) {
     if (article.generation_identifier) {
       accessToken = await googleAccessToken();
       sheetRow = await findSheetRow(accessToken, article.generation_identifier);
-      if (!sheetRow) throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
+      if (!sheetRow && status !== "Archived") throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
     }
 
     if (sheetRow) {
       accessToken ||= await googleAccessToken();
-      if (status === "New") {
+      if (status === "New" || status === "Archived") {
         await deleteSheetRow(accessToken, sheetRow);
       } else {
         const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${sheetRow}`)}?valueInputOption=USER_ENTERED`, {
@@ -118,7 +120,7 @@ export default async function handler(req, res) {
     const statusUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
       headers: { ...headers, Prefer: "return=minimal" },
-      body: JSON.stringify({ status: target.app, ...(status === "New" ? { generation_sheet_row: null } : { generation_sheet_row: sheetRow }) }),
+      body: JSON.stringify({ status: target.app, ...(["New", "Archived"].includes(status) ? { generation_sheet_row: null } : { generation_sheet_row: sheetRow }) }),
     });
     if (!statusUpdate.ok) throw new Error("Couldn’t save the status in the app.");
     return res.status(200).json({ status });
