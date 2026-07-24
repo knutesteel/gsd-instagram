@@ -25,7 +25,8 @@ const sheetValues = (article, identifier) => {
   return [[new Date().toISOString().slice(0, 10), "Pending", article.title || "", identifier,
     article.source_url || article.canonical_url || "", concept.summary || "", concept.panel_count || 1,
     ({ carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" }[concept.post_type] || concept.post_type || "Carousel"),
-    concept.image_summary?.content || "", "", concept.caption || "", Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : ""]];
+    concept.image_summary?.content || "", "", concept.caption || "", Array.isArray(concept.hashtags) ? concept.hashtags.slice(0, 4).join(" ") : "",
+    "", "", "", "", "", article.source || ""]];
 };
 
 async function copyPromptFromPreviousRow(accessToken, row) {
@@ -47,11 +48,11 @@ export default async function handler(req, res) {
   if (!userResponse.ok) return res.status(401).json({ error: "Sign in required." });
   const user = await userResponse.json();
   try {
-    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&select=id,title,status,source_url,canonical_url,generation_identifier,generation_sheet_row,created_at,post_concepts(summary,post_type,panel_count,image_summary,caption,hashtags)&order=created_at.asc`, { headers });
+    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&select=id,title,status,source_url,canonical_url,source,generation_identifier,generation_sheet_row,created_at,post_concepts(summary,post_type,panel_count,image_summary,caption,hashtags)&order=created_at.asc`, { headers });
     if (!articleResponse.ok) throw new Error("Couldn’t load article identifiers.");
     const articles = await articleResponse.json();
     const accessToken = await googleToken();
-    const sheetResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const sheetResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!sheetResponse.ok) throw new Error("Couldn’t read the generation sheet.");
     const rows = (await sheetResponse.json()).values ?? [];
     const dataRows = rows.slice(1);
@@ -113,11 +114,13 @@ export default async function handler(req, res) {
     }
     // A previous send can have marked an item Sent to Sheets after a transient append failure.
     // Repair those rows here, matching by title as well as identifier so each article is restored once.
-    const missingSent = articles.filter((article) => article.status === "sent_to_sheets" && !matchedArticleIds.has(article.id));
+    const missingSent = articles.filter((article) => ["sent_to_sheets", "discarded"].includes(article.status) && !matchedArticleIds.has(article.id));
     for (const article of missingSent) {
       const identifier = desiredId.get(article.id);
       desiredId.set(article.id, identifier);
-      const append = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ values: sheetValues(article, identifier) }) });
+      const values = sheetValues(article, identifier);
+      values[0][1] = article.status === "discarded" ? "Archived" : "Pending";
+      const append = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ values }) });
       if (!append.ok) throw new Error(`Couldn’t restore #${identifier} to the Google Sheet.`);
       const row = Number(String((await append.json()).updates?.updatedRange || "").match(/!A(\d+):/i)?.[1]);
       await copyPromptFromPreviousRow(accessToken, row);
