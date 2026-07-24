@@ -36,28 +36,6 @@ async function findSheetRow(accessToken, identifier) {
   return foundIndex < 0 ? null : foundIndex + 1;
 }
 
-async function deleteSheetRow(accessToken, rowNumber) {
-  const metadata = await fetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=${encodeURIComponent("sheets(properties(sheetId,title))")}`,
-    { headers: { Authorization: `Bearer ${accessToken}` } },
-  );
-  if (!metadata.ok) throw new Error("Couldn’t read the generation worksheet configuration.");
-  const sheet = (await metadata.json()).sheets?.find((item) => item.properties?.title === "Sheet1");
-  if (!sheet) throw new Error("Couldn’t find the Sheet1 worksheet.");
-
-  const deletion = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ requests: [{ deleteDimension: { range: {
-      sheetId: sheet.properties.sheetId,
-      dimension: "ROWS",
-      startIndex: rowNumber - 1,
-      endIndex: rowNumber,
-    } } }] }),
-  });
-  if (!deletion.ok) throw new Error("Couldn’t delete the article row from the generation Google Sheet.");
-}
-
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -100,27 +78,23 @@ export default async function handler(req, res) {
     if (article.generation_identifier) {
       accessToken = await googleAccessToken();
       sheetRow = await findSheetRow(accessToken, article.generation_identifier);
-      if (!sheetRow && status !== "Archived") throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
+      if (!sheetRow) throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
     }
 
     if (sheetRow) {
       accessToken ||= await googleAccessToken();
-      if (status === "New" || status === "Archived") {
-        await deleteSheetRow(accessToken, sheetRow);
-      } else {
-        const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${sheetRow}`)}?valueInputOption=USER_ENTERED`, {
-          method: "PUT",
-          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ values: [[target.sheet]] }),
-        });
-        if (!update.ok) throw new Error("Couldn’t update the status in the Google Sheet.");
-      }
+      const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!B${sheetRow}`)}?valueInputOption=USER_ENTERED`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ values: [[target.sheet]] }),
+      });
+      if (!update.ok) throw new Error("Couldn’t update the status in the Google Sheet.");
     }
 
     const statusUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
       method: "PATCH",
       headers: { ...headers, Prefer: "return=minimal" },
-      body: JSON.stringify({ status: target.app, ...(["New", "Archived"].includes(status) ? { generation_sheet_row: null } : { generation_sheet_row: sheetRow }) }),
+      body: JSON.stringify({ status: target.app, generation_sheet_row: sheetRow }),
     });
     if (!statusUpdate.ok) throw new Error("Couldn’t save the status in the app.");
     return res.status(200).json({ status });
