@@ -1,6 +1,6 @@
 const json = { "Content-Type": "application/json" };
 
-export async function extendSheetFilter({ accessToken, spreadsheetId, sheetTitle = "Sheet1", lastRow, endColumnIndex = 17 }) {
+export async function extendSheetFilter({ accessToken, spreadsheetId, sheetTitle = "Sheet1", lastRow, endColumnIndex = 18 }) {
   if (!Number.isInteger(lastRow) || lastRow < 1) throw new Error("Couldn’t determine the new Google Sheets filter range.");
 
   const metadata = await fetch(
