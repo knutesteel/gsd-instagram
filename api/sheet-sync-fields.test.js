@@ -49,3 +49,13 @@ test("normalizes every supported sheet post type", () => {
   assert.equal(appPostType("Multi-pane Cartoon"), "multi_pane_cartoon");
   assert.equal(appPostType("Reel"), "reel");
 });
+
+test("caps imported and exported hashtags at four", () => {
+  const row = ["date", "Generated", "Title", "27", "", "Summary", "1", "Carousel", "Content", "", "Caption", "#one #two #three #four #five"];
+  assert.deepEqual(sharedFieldsFromSheetRow(row).concept.hashtags, ["#one", "#two", "#three", "#four"]);
+  const exported = sharedSheetValuesFromApp({
+    article: {},
+    concept: { hashtags: ["#one", "#two", "#three", "#four", "#five"] },
+  });
+  assert.equal(exported.secondRange[1], "#one #two #three #four");
+});
