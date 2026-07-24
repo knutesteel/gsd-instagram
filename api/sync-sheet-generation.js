@@ -131,6 +131,11 @@ export default async function handler(req, res) {
     const statuses = {};
     const statusMismatches = [];
     const imagesByArticleId = {};
+    const enrichmentQueue = [];
+
+    // Pass 1: reconcile every identifier's status before doing any image
+    // downloads. Image work can be slow or fail, but it must never prevent a
+    // later row from receiving its authoritative sheet status.
     for (const row of syncedRows) {
       const identifier = String(row[3]).trim();
       const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,generation_identifier,post_concepts(id,image_summary,caption,hashtags)`, { headers });
@@ -145,64 +150,36 @@ export default async function handler(req, res) {
       if (article.status !== sheetStatus) {
         statusMismatches.push({ identifier, appStatus: appStatusLabel(article.status), sheetStatus: normalizedStatus.label });
       }
-      if (sheetStatus === "posted") {
-        if (article.status === "posted") continue;
-        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "posted" }) });
-        if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as posted.");
-        updatedArticleIds.push(article.id);
-        statuses[article.id] = "Posted";
-        continue;
-      }
-      if (sheetStatus === "approved_to_post") {
-        if (article.status === "approved_to_post") continue;
-        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "approved_to_post" }) });
-        if (!articleUpdate.ok) throw new Error("Couldn’t mark the article as approved.");
-        updatedArticleIds.push(article.id);
-        statuses[article.id] = "Approved";
-        continue;
-      }
-
-      if (sheetStatus === "sent_to_sheets") {
-        if (article.status === "sent_to_sheets") continue;
-        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ status: "sent_to_sheets" }) });
+      if (article.status !== sheetStatus) {
+        const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify({ status: sheetStatus }),
+        });
         if (!articleUpdate.ok) throw new Error(`Couldn’t reconcile identifier #${identifier} with the Google Sheet.`);
         updatedArticleIds.push(article.id);
-        statuses[article.id] = "Sent to Sheets";
-        continue;
+        statuses[article.id] = normalizedStatus.label;
       }
 
       const sourceImages = row.slice(12, 17).filter(Boolean);
       const images = sourceImages.map(driveImageUrl);
-      // Always return the live sheet images, including for rows whose database
-      // content is already synchronized. This lets the client repair stale or
-      // incomplete local state without relying on another database write.
       imagesByArticleId[article.id] = images;
+      enrichmentQueue.push({ identifier, article, concept, row, sourceImages, images });
+    }
+
+    // Pass 2: synchronize captions and image references for every status,
+    // including Posted. Posted previously returned early, which permanently
+    // hid images when the initial import had not completed.
+    for (const { article, concept, row, sourceImages, images } of enrichmentQueue) {
       const caption = String(row[10] || "");
       const hashtags = String(row[11] || "").split(/[\s,]+/).filter(Boolean);
       const currentImages = Array.isArray(concept.image_summary?.sheet_images) ? concept.image_summary.sheet_images : [];
       const importedImageCount = Number(concept.image_summary?.imported_image_count || 0);
-      const alreadySynced = article.status === "generated"
-        && JSON.stringify(currentImages) === JSON.stringify(images)
+      const alreadySynced = JSON.stringify(currentImages) === JSON.stringify(images)
         && String(concept.caption || "") === caption
         && JSON.stringify(concept.hashtags || []) === JSON.stringify(hashtags)
-        // A prior Drive permission or availability failure must not permanently
-        // suppress image imports. Refresh keeps retrying until every sheet image
-        // has a durable copy in app storage.
         && (!sourceImages.length || importedImageCount >= sourceImages.length);
       if (alreadySynced) continue;
-      // The sheet status is authoritative. Persist it before any concept or
-      // image work so malformed content cannot leave the dashboard stale.
-      const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
-        method: "PATCH",
-        headers: { ...headers, Prefer: "return=minimal" },
-        body: JSON.stringify({ status: "generated" }),
-      });
-      if (!articleUpdate.ok) throw new Error(`Couldn’t mark identifier #${identifier} as generated.`);
-      updatedArticleIds.push(article.id);
-      statuses[article.id] = "Generated";
-
-      // Generated content and images are best-effort enrichments. A failure
-      // here must not roll back or conceal the authoritative status update.
       const conceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
         method: "PATCH",
         headers: { ...headers, Prefer: "return=minimal" },
@@ -225,7 +202,6 @@ export default async function handler(req, res) {
           if (assetInsert.ok) await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ image_summary: { ...(concept.image_summary || {}), sheet_images: images, imported_image_count: imported.length } }) });
         }
       }
-
     }
     try {
       restoredIdentifiers = await restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
