@@ -62,7 +62,7 @@ export function locateGenerationRow(rows, identifier) {
 }
 async function generationSheetRows(accessToken) {
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
     "Generation sheet lookup",
   );
@@ -78,7 +78,7 @@ async function sheetRowForIdentifier(accessToken, identifier) {
 }
 async function readExactSheetRow(accessToken, row) {
   const response = await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${row}:Q${row}`)}`,
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${row}:R${row}`)}`,
     { headers: { Authorization: `Bearer ${accessToken}` } },
     "Generation row verification",
   );
@@ -86,8 +86,8 @@ async function readExactSheetRow(accessToken, row) {
   return ((await response.json()).values || [])[0] || [];
 }
 export function verifyGenerationValues(actual, expected) {
-  const padded = Array.from({ length: 17 }, (_, index) => cellValue(actual[index]));
-  const wanted = Array.from({ length: 17 }, (_, index) => cellValue(expected[index]));
+  const padded = Array.from({ length: 18 }, (_, index) => cellValue(actual[index]));
+  const wanted = Array.from({ length: 18 }, (_, index) => cellValue(expected[index]));
   const mismatches = [];
   for (let index = 0; index < 12; index += 1) {
     // Column J contains a formula, so the values API returns its calculated
@@ -95,6 +95,7 @@ export function verifyGenerationValues(actual, expected) {
     if (index !== 9 && padded[index] !== wanted[index]) mismatches.push(index + 1);
   }
   for (let index = 12; index < 17; index += 1) if (padded[index] !== "") mismatches.push(index + 1);
+  if (padded[17] !== wanted[17]) mismatches.push(18);
   return { ok: mismatches.length === 0 && padded[3] === wanted[3], mismatches };
 }
 export function rowNumberFromUpdatedRange(updatedRange) {
@@ -120,8 +121,8 @@ async function formatAndSortSheet(accessToken) {
     method: "POST",
     headers: { ...json, Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify({ requests: [
-      { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endColumnIndex: 17 }, cell: { userEnteredFormat: { horizontalAlignment: "LEFT", verticalAlignment: "TOP", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy)" } },
-      { sortRange: { range: { sheetId: 0, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 17 }, sortSpecs: [{ dimensionIndex: 3, sortOrder: "DESCENDING" }] } },
+      { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endColumnIndex: 18 }, cell: { userEnteredFormat: { horizontalAlignment: "LEFT", verticalAlignment: "TOP", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy)" } },
+      { sortRange: { range: { sheetId: 0, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 18 }, sortSpecs: [{ dimensionIndex: 3, sortOrder: "DESCENDING" }] } },
     ] }),
   });
   if (!response.ok) throw new Error("Couldn’t format and sort the Google Sheet.");
@@ -152,7 +153,7 @@ export default async function handler(req, res) {
   const articleId = req.body?.articleId;
   if (!articleId) return res.status(400).json({ error: "Article is required." });
 
-  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,generation_identifier,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags)`, { headers: auth });
+  const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,generation_identifier,source_url,canonical_url,source,post_concepts(summary,post_type,panel_count,image_summary,detailed_prompt,caption,hashtags)`, { headers: auth });
   if (!articleResponse.ok) return res.status(502).json({ error: "Couldn’t load the article for generation." });
   const article = (await articleResponse.json())[0];
   if (!article) return res.status(404).json({ error: "Article not found." });
@@ -194,13 +195,13 @@ export default async function handler(req, res) {
       "",
       concept.caption || "",
       Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
-      "", "", "", "", "",
+      "", "", "", "", "", article.source || "",
     ];
     stage = "write-row";
-    const write = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${intendedRow}:Q${intendedRow}`)}?valueInputOption=RAW`, {
+    const write = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${intendedRow}:R${intendedRow}`)}?valueInputOption=RAW`, {
       method: "PUT",
       headers: { ...json, Authorization: `Bearer ${accessToken}` },
-      body: JSON.stringify({ range: `Sheet1!A${intendedRow}:Q${intendedRow}`, majorDimension: "ROWS", values: [rowValues] }),
+      body: JSON.stringify({ range: `Sheet1!A${intendedRow}:R${intendedRow}`, majorDimension: "ROWS", values: [rowValues] }),
     }, "Generation row write");
     if (!write.ok) throw new Error(await googleError(write, "Couldn’t write the Google Sheets row"));
 
