@@ -29,7 +29,7 @@ async function googleAccessToken() {
 }
 
 async function findSheetRow(accessToken, identifier) {
-  const lookup = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+  const lookup = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
   if (!lookup.ok) throw new Error("Couldn’t read the generation Google Sheet.");
   const rows = (await lookup.json()).values ?? [];
   const foundIndex = rows.findIndex((row, index) => index > 0 && String(row[3] || "").trim() === String(identifier).trim());
