@@ -23,7 +23,7 @@ export const appPostType = (value) => {
 };
 
 export const hashtagsFromSheet = (value) =>
-  String(value || "").split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean);
+  Array.from(new Set(String(value || "").split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean))).slice(0, 4);
 
 export const sharedFieldsFromSheetRow = (row) => ({
   article: {
@@ -53,7 +53,8 @@ export const sharedSheetValuesFromApp = ({ article, concept }) => ({
   ],
   secondRange: [
     String(concept.caption || ""),
-    Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : String(concept.hashtags || ""),
+    (Array.isArray(concept.hashtags) ? concept.hashtags : String(concept.hashtags || "").split(/[\s,]+/))
+      .map((tag) => String(tag).trim()).filter(Boolean).filter((tag, index, all) => all.indexOf(tag) === index).slice(0, 4).join(" "),
   ],
   source: String(article.source || ""),
 });
