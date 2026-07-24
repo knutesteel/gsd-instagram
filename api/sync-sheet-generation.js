@@ -1,5 +1,6 @@
 import { createPrivateKey, sign } from "node:crypto";
 import { extendSheetFilter } from "./sheet-filter.js";
+import { sharedFieldsFromSheetRow } from "./sheet-sync-fields.js";
 
 const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
@@ -138,7 +139,7 @@ export default async function handler(req, res) {
     // later row from receiving its authoritative sheet status.
     for (const row of syncedRows) {
       const identifier = String(row[3]).trim();
-      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,generation_identifier,post_concepts(id,image_summary,caption,hashtags)`, { headers });
+      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,source_url,canonical_url,generation_identifier,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
       if (!articleResponse.ok) continue;
       const article = (await articleResponse.json())[0];
       const concept = article?.post_concepts?.[0];
@@ -161,10 +162,65 @@ export default async function handler(req, res) {
         statuses[article.id] = normalizedStatus.label;
       }
 
+      // Reconcile every field shared by the spreadsheet and app before image
+      // downloads. The sheet is authoritative during a scheduled/manual pull;
+      // app saves use update-sheet-detail and write both stores immediately.
+      const shared = sharedFieldsFromSheetRow(row);
+      const articleFieldsChanged = String(article.title || "") !== shared.article.title
+        || String(article.source_url || article.canonical_url || "") !== shared.article.source_url;
+      if (articleFieldsChanged) {
+        const metadataUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify(shared.article),
+        });
+        if (!metadataUpdate.ok) throw new Error(`Couldn’t synchronize article fields for #${identifier}.`);
+        if (!updatedArticleIds.includes(article.id)) updatedArticleIds.push(article.id);
+      }
+
+      const currentContent = String(concept.image_summary?.content || "");
+      const conceptFieldsChanged = String(concept.summary || "") !== shared.concept.summary
+        || Number(concept.panel_count || 1) !== shared.concept.panel_count
+        || String(concept.post_type || "") !== shared.concept.post_type
+        || currentContent !== shared.concept.content
+        || String(concept.caption || "") !== shared.concept.caption
+        || JSON.stringify(concept.hashtags || []) !== JSON.stringify(shared.concept.hashtags);
+      if (conceptFieldsChanged) {
+        const sharedConceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify({
+            summary: shared.concept.summary,
+            panel_count: shared.concept.panel_count,
+            post_type: shared.concept.post_type,
+            image_summary: { ...(concept.image_summary || {}), content: shared.concept.content },
+            caption: shared.concept.caption,
+            hashtags: shared.concept.hashtags,
+          }),
+        });
+        if (!sharedConceptUpdate.ok) throw new Error(`Couldn’t synchronize content fields for #${identifier}.`);
+        if (!updatedArticleIds.includes(article.id)) updatedArticleIds.push(article.id);
+      }
+
       const sourceImages = row.slice(12, 17).filter(Boolean);
       const images = sourceImages.map(driveImageUrl);
       imagesByArticleId[article.id] = images;
-      enrichmentQueue.push({ identifier, article, concept, row, sourceImages, images });
+      enrichmentQueue.push({
+        identifier,
+        article,
+        concept: {
+          ...concept,
+          summary: shared.concept.summary,
+          panel_count: shared.concept.panel_count,
+          post_type: shared.concept.post_type,
+          image_summary: { ...(concept.image_summary || {}), content: shared.concept.content },
+          caption: shared.concept.caption,
+          hashtags: shared.concept.hashtags,
+        },
+        row,
+        sourceImages,
+        images,
+      });
     }
 
     // Pass 2: synchronize captions and image references for every status,
