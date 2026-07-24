@@ -703,7 +703,7 @@ function Dashboard({
                 <h3><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
                 <p>{item.overview}</p>
               </div>
-              {item.generationIdentifier && item.generationSheetRow ? <a className="identifier-link" href={`https://docs.google.com/spreadsheets/d/1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ/edit#gid=0&range=D${item.generationSheetRow}`} target="_blank" rel="noreferrer">{item.generationIdentifier}</a> : <span className="identifier-empty">—</span>}
+              {item.generationIdentifier ? (item.generationSheetRow ? <a className="identifier-link" href={`https://docs.google.com/spreadsheets/d/1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ/edit#gid=0&range=D${item.generationSheetRow}`} target="_blank" rel="noreferrer">{item.generationIdentifier}</a> : <span>{item.generationIdentifier}</span>) : <span className="identifier-empty">—</span>}
               <time className="date-added" dateTime={item.createdAt ?? undefined}>{formatAddedDate(item.createdAt)}</time>
               <div><span className="chip">{item.category}</span>{item.source && <small className="story-source">{item.source}</small>}</div>
               <span className="score">{item.score}</span>
