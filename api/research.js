@@ -30,7 +30,7 @@ export default async function handler(req, res) {
   const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, { headers: auth });
   if (!userResponse.ok) return res.status(401).json({ error: "Sign in required." });
   const user = await userResponse.json();
-  const { mode = "system", manualUrl, overview, searchText, topics = [] } = req.body ?? {};
+  const { mode = "system", manualUrl, overview, source, searchText, topics = [] } = req.body ?? {};
   if (mode === "manual" && !/^https:\/\//i.test(manualUrl ?? "")) return res.status(400).json({ error: "A complete HTTPS article URL is required." });
   if (mode === "overview" && !String(overview || "").trim()) return res.status(400).json({ error: "Add a text overview before generating a suggested post." });
   const overviewUrl = `https://gsd.local/overview/${createHash("sha256").update(String(overview || "")).digest("hex").slice(0, 16)}`;
@@ -58,7 +58,7 @@ ${contentInstructions}`;
   const records = [];
   for (const item of accepted) {
     const fingerprint = createHash("sha256").update(item.url.split("#")[0].replace(/\/$/, "")).digest("hex");
-    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "new", generation_identifier: String(nextIdentifier) }) });
+    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, source: mode === "overview" ? String(source || "").trim() : item.publisher, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "new", generation_identifier: String(nextIdentifier) }) });
     if (!articleResponse.ok) return res.status(502).json({ error: `Couldn’t save a discovered article: ${await articleResponse.text()}` });
     const articleRows = articleResponse.ok ? await articleResponse.json() : [];
     let article = articleRows[0];
