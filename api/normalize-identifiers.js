@@ -145,8 +145,8 @@ export default async function handler(req, res) {
     const appUpdateResponses = await Promise.all(appChanges.map((article) => fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ generation_identifier: desiredId.get(article.id) }) })));
     if (appUpdateResponses.some((response) => !response.ok)) throw new Error("Couldn’t save synchronized identifiers in the app database.");
     const formatting = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, { method: "POST", headers: { ...json, Authorization: `Bearer ${accessToken}` }, body: JSON.stringify({ requests: [
-      { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endColumnIndex: 17 }, cell: { userEnteredFormat: { horizontalAlignment: "LEFT", verticalAlignment: "TOP", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy)" } },
-      { sortRange: { range: { sheetId: 0, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 17 }, sortSpecs: [{ dimensionIndex: 3, sortOrder: "DESCENDING" }] } },
+      { repeatCell: { range: { sheetId: 0, startRowIndex: 0, endColumnIndex: 18 }, cell: { userEnteredFormat: { horizontalAlignment: "LEFT", verticalAlignment: "TOP", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat(horizontalAlignment,verticalAlignment,wrapStrategy)" } },
+      { sortRange: { range: { sheetId: 0, startRowIndex: 1, startColumnIndex: 0, endColumnIndex: 18 }, sortSpecs: [{ dimensionIndex: 3, sortOrder: "DESCENDING" }] } },
     ] }) });
     if (!formatting.ok) throw new Error("Couldn’t format and sort the Google Sheet.");
     const sortedResponse = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D:D")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
