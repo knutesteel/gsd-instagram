@@ -13,7 +13,7 @@ test("uses the first fully empty row when the identifier is absent", () => {
 });
 
 test("verifies A-L exactly and requires M-Q to be blank", () => {
-  const expected = Array.from({ length: 17 }, (_, index) => index < 12 ? `value-${index}` : "");
+  const expected = Array.from({ length: 18 }, (_, index) => index < 12 ? `value-${index}` : index === 17 ? "Newsletter" : "");
   const calculatedFormulaResult = [...expected];
   calculatedFormulaResult[9] = "calculated prompt";
   assert.deepEqual(verifyGenerationValues(calculatedFormulaResult, expected), { ok: true, mismatches: [] });
