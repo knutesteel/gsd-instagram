@@ -822,12 +822,24 @@ function Discover({
   research: (payload: Record<string, unknown>) => Promise<{ count: number; articleIds?: string[] }>;
   onManualComplete: (id: string) => void;
 }) {
-  const [mode, setMode] = useState<"system" | "manual" | "overview">("system");
+  const defaultSystemSearchPrompt = "Find accessible stories published within the last 90 days about neuroscience and behavior, surprising animals, science and space, archaeology, offbeat human stories, attention technology, and immediately useful productivity. Exclude politics, celebrity gossip, routine sports, paywalls, aggregators, and sensational misinformation. Return up to three high-fit stories for the GSD audience. If fewer than three qualify, widen the search to the last year.";
+  const defaultTopics = ["Attention & Brain", "Animal Behavior", "Weird Human News", "Productivity Tips", "Science & Space"];
+  const savedPromptKey = "gsd-system-search-prompt-v1";
+  const savedTopicsKey = "gsd-system-search-topics-v1";
+  const loadSavedPrompt = () => window.localStorage.getItem(savedPromptKey) ?? defaultSystemSearchPrompt;
+  const loadSavedTopics = () => {
+    try {
+      const saved = JSON.parse(window.localStorage.getItem(savedTopicsKey) ?? "null");
+      return Array.isArray(saved) && saved.every((topic) => typeof topic === "string") ? saved : defaultTopics;
+    } catch { return defaultTopics; }
+  };
+  const [mode, setMode] = useState<"system" | "manual" | "overview">("overview");
   const [manualUrl, setManualUrl] = useState("");
   const [overview, setOverview] = useState("");
-  const [searchText, setSearchText] = useState("");
+  const [savedSearchPrompt, setSavedSearchPrompt] = useState(loadSavedPrompt);
+  const [searchText, setSearchText] = useState(loadSavedPrompt);
   const [topicInput, setTopicInput] = useState("");
-  const [topics, setTopics] = useState(["Attention & Brain", "Animal Behavior", "Weird Human News", "Productivity Tips", "Science & Space"]);
+  const [topics, setTopics] = useState<string[]>(loadSavedTopics);
   const [queued, setQueued] = useState<string[]>([]);
   const [trends, setTrends] = useState<TrendingTopic[]>([]);
   const [trendsLoading, setTrendsLoading] = useState(true);
@@ -867,11 +879,18 @@ function Discover({
     }
   };
   useEffect(() => { void loadTrends(); }, []);
+  useEffect(() => { window.localStorage.setItem(savedTopicsKey, JSON.stringify(topics)); }, [topics]);
+  const promptEdited = searchText.trim() !== savedSearchPrompt.trim();
   const addTopic = () => { const value = topicInput.trim(); if (value && !topics.includes(value)) setTopics([...topics, value]); setTopicInput(""); };
-  const run = async () => {
+  const run = async (savePrompt = false) => {
     if (mode === "manual" && !/^https?:\/\//i.test(manualUrl.trim())) return notify("Paste a complete article URL, starting with https://.");
     if (mode === "overview" && !overview.trim()) return notify("Add a text overview to generate a suggested post.");
-    if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search phrase or at least one topic.");
+    if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search prompt or at least one topic.");
+    if (mode === "system" && savePrompt) {
+      const nextPrompt = searchText.trim();
+      window.localStorage.setItem(savedPromptKey, nextPrompt);
+      setSavedSearchPrompt(nextPrompt);
+    }
     setSearching(true);
     try {
       const result = await research({ mode, manualUrl: manualUrl.trim(), overview: overview.trim(), searchText: searchText.trim(), topics });
@@ -899,23 +918,26 @@ function Discover({
             <button className={mode === "overview" ? "selected" : ""} onClick={() => setMode("overview")}>Text overview</button>
             <button className={mode === "system" ? "selected" : ""} onClick={() => setMode("system")}>System Search</button>
           </div>
-          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field> : <><Field label="What should we search for?"><input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="e.g. surprising focus research or clever animal behavior" /></Field>
+          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field> : <><Field label="What should we search for?"><textarea className="overview-editor" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Describe the stories the system should find." /></Field>
           <p className="field-label">Topics</p>
           <div className="chips">
             {topics.map((topic) => <span key={topic}>{topic} <button aria-label={`Remove ${topic}`} onClick={() => setTopics(topics.filter((item) => item !== topic))}><FiX /></button></span>)}
           </div>
           <div className="topic-add"><input value={topicInput} onChange={(e) => setTopicInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addTopic(); } }} placeholder="Add a topic" /><button onClick={addTopic}><FiPlus /> Add</button></div></>}
-          <button className="button primary wide" onClick={run}>
+          {mode === "system" && promptEdited ? <div className="discover-search-actions">
+            <button className="button primary wide" onClick={() => void run(false)} disabled={searching}><FiSearch /> {searching ? "Finding stories…" : "Find Stories"}</button>
+            <button className="button wide" onClick={() => void run(true)} disabled={searching}><FiCheck /> {searching ? "Finding stories…" : "Update Saved Prompt and Find Stories"}</button>
+          </div> : <button className="button primary wide" onClick={() => void run(false)} disabled={searching}>
             {searching ? (
               <>
                 <FiRefreshCw className="spin" /> {mode === "overview" ? "Generating suggestion" : "Researching stories"}
               </>
             ) : (
               <>
-                {mode === "overview" ? <><FiEdit3 /> Generate Suggested Post</> : <><FiSearch /> Search for stories</>}
+                {mode === "overview" ? <><FiEdit3 /> Generate Suggested Post</> : <><FiSearch /> Find Stories</>}
               </>
             )}
-          </button>
+          </button>}
         </div>
         <aside className="panel trending-panel">
           <div className="trending-header">
