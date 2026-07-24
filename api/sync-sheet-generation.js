@@ -19,6 +19,7 @@ const normalizeSheetStatus = (value) => {
   if (normalized === "generated") return { database: "generated", label: "Generated" };
   if (normalized === "approved" || normalized === "approved to post") return { database: "approved_to_post", label: "Approved" };
   if (normalized === "posted") return { database: "posted", label: "Posted" };
+  if (normalized === "archived") return { database: "discarded", label: "Archived" };
   return null;
 };
 const appStatusLabel = (value) => ({ sent_to_sheets: "Sent to Sheets", generated: "Generated", approved_to_post: "Approved", posted: "Posted", new: "New", discarded: "Archived" }[value] || String(value || "Unknown"));
@@ -56,11 +57,11 @@ async function importImage({ url, accessToken, supabaseUrl, headers, userId, con
   if (!upload.ok) return null;
   return { sequence, storage_path: storagePath, mime_type: contentType };
 }
-async function restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId }) {
+async function restoreMissingSheetRows({ rows, accessToken, supabaseUrl, headers, userId }) {
   const sheetIdentifiers = new Set(rows.slice(1).map((row) => String(row[3] || "").trim()).filter(Boolean));
   const rowKey = (value) => String(value || "").trim().toLocaleLowerCase().replace(/\/$/, "");
-  const response = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(userId)}&status=eq.sent_to_sheets&select=id,title,generation_identifier,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
-  if (!response.ok) throw new Error("Couldn’t check Sent to Sheets items.");
+  const response = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(userId)}&status=in.(sent_to_sheets,discarded)&select=id,title,status,source,generation_identifier,source_url,canonical_url,post_concepts(summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
+  if (!response.ok) throw new Error("Couldn’t check sheet-backed and archived items.");
   const missing = (await response.json()).filter((article) => article.generation_identifier && !sheetIdentifiers.has(String(article.generation_identifier).trim()));
   for (const article of missing) {
     const concept = article.post_concepts?.[0];
@@ -83,12 +84,13 @@ async function restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers,
       continue;
     }
     const values = [[
-      new Date().toISOString().slice(0, 10), "Pending", article.title || "", article.generation_identifier,
+      new Date().toISOString().slice(0, 10), article.status === "discarded" ? "Archived" : "Pending", article.title || "", article.generation_identifier,
       article.source_url || article.canonical_url || "", concept.summary || "", concept.panel_count || 1,
       typeLabel(concept.post_type), concept.image_summary?.content || "", "", concept.caption || "",
-      Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : "",
+      Array.isArray(concept.hashtags) ? concept.hashtags.slice(0, 4).join(" ") : "",
+      "", "", "", "", "", article.source || "",
     ]];
-    const append = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:L")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
+    const append = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`, {
       method: "POST", headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ values }),
     });
     if (!append.ok) throw new Error(`Couldn’t restore ${article.generation_identifier} to the Google Sheet.`);
@@ -229,7 +231,7 @@ export default async function handler(req, res) {
     // hid images when the initial import had not completed.
     for (const { article, concept, row, sourceImages, images } of enrichmentQueue) {
       const caption = String(row[10] || "");
-      const hashtags = String(row[11] || "").split(/[\s,]+/).filter(Boolean);
+      const hashtags = Array.from(new Set(String(row[11] || "").split(/[\s,]+/).filter(Boolean))).slice(0, 4);
       const currentImages = Array.isArray(concept.image_summary?.sheet_images) ? concept.image_summary.sheet_images : [];
       const importedImageCount = Number(concept.image_summary?.imported_image_count || 0);
       const alreadySynced = JSON.stringify(currentImages) === JSON.stringify(images)
@@ -261,7 +263,7 @@ export default async function handler(req, res) {
       }
     }
     try {
-      restoredIdentifiers = await restoreMissingSentRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
+      restoredIdentifiers = await restoreMissingSheetRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
     } catch (error) {
       restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
     }
