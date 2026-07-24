@@ -64,7 +64,7 @@ export default async function handler(req, res) {
 
     const hashtags = Array.isArray(values.hashtags) ? values.hashtags : [];
     const proposed = {
-      article: { title: values.title, source_url: values.url, canonical_url: values.url, rank: values.score },
+      article: { title: values.title, source_url: values.url, canonical_url: values.url, source: values.source, rank: values.score },
       concept: {
         summary: values.summary,
         panel_count: values.panelCount,
@@ -93,6 +93,7 @@ export default async function handler(req, res) {
             data: [
               { range: `Sheet1!C${sheetRow}:I${sheetRow}`, majorDimension: "ROWS", values: [[shared.firstRange[0], article.generation_identifier, ...shared.firstRange.slice(1)]] },
               { range: `Sheet1!K${sheetRow}:L${sheetRow}`, majorDimension: "ROWS", values: [shared.secondRange] },
+              { range: `Sheet1!R${sheetRow}`, majorDimension: "ROWS", values: [[shared.source]] },
             ],
           }),
         });
