@@ -7,12 +7,13 @@ import {
 } from "./sheet-sync-fields.js";
 
 test("maps every shared sheet field into the app model", () => {
-  const row = ["date", "Generated", "Changed title", "27", "https://example.com", "Changed summary", "4", "Multi-pane Cartoon", "Changed content", "formula", "Changed caption", "#one #two"];
+  const row = ["date", "Generated", "Changed title", "27", "https://example.com", "Changed summary", "4", "Multi-pane Cartoon", "Changed content", "formula", "Changed caption", "#one #two", "", "", "", "", "", "Podcast"];
   assert.deepEqual(sharedFieldsFromSheetRow(row), {
     article: {
       title: "Changed title",
       source_url: "https://example.com",
       canonical_url: "https://example.com",
+      source: "Podcast",
     },
     concept: {
       summary: "Changed summary",
@@ -27,7 +28,7 @@ test("maps every shared sheet field into the app model", () => {
 
 test("maps app edits to C:I and K:L without overwriting identifier, prompt, or images", () => {
   assert.deepEqual(sharedSheetValuesFromApp({
-    article: { title: "App title", source_url: "https://example.com", rank: 91 },
+    article: { title: "App title", source_url: "https://example.com", source: "Newsletter", rank: 91 },
     concept: {
       summary: "App summary",
       panel_count: 3,
@@ -39,6 +40,7 @@ test("maps app edits to C:I and K:L without overwriting identifier, prompt, or i
   }), {
     firstRange: ["App title", "https://example.com", "App summary", 3, "Carousel", "App content"],
     secondRange: ["App caption", "#one #two"],
+    source: "Newsletter",
   });
 });
 
