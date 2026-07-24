@@ -361,10 +361,10 @@ function App() {
     let disposed = false;
     const refreshFromSheet = () => {
       if (disposed || document.visibilityState === "hidden") return;
-      void syncGeneratedContent().catch(() => undefined);
+      void syncGeneratedContent().catch((error) => notify(error instanceof Error ? error.message : "Automatic sheet synchronization failed.", "error"));
     };
     const initialRefresh = window.setTimeout(refreshFromSheet, 750);
-    const refreshInterval = window.setInterval(refreshFromSheet, 15 * 60_000);
+    const refreshInterval = window.setInterval(refreshFromSheet, 60_000);
     window.addEventListener("focus", refreshFromSheet);
     return () => {
       disposed = true;
@@ -1082,19 +1082,28 @@ function Detail({
     setBusy("generate");
     let chatWindow: Window | null = null;
     try {
-      if (promptLoading) throw new Error("Column J is still loading. Please try again in a moment.");
-      if (!generationPrompt) throw new Error(promptLoadError || "Column J is empty for this article.");
-
       // Reserve the tab synchronously while the button click still has user
       // activation. Clipboard APIs may resolve after the popup allowance ends.
       chatWindow = window.open("about:blank", "_blank");
       if (!chatWindow) throw new Error("Your browser blocked the new ChatGPT window. Allow popups for this site and try again.");
       chatWindow.opener = null;
+      if (!supabase) throw new Error("Supabase is not configured.");
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("Please sign in again.");
+      const response = await fetch("/api/generation-prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
+        body: JSON.stringify({ articleId: story.id }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
+      const freshPrompt = String(result.prompt ?? "");
+      if (!freshPrompt) throw new Error("Column J is empty for this article.");
 
       let copied = false;
       if (navigator.clipboard?.writeText && document.hasFocus()) {
         try {
-          await navigator.clipboard.writeText(generationPrompt);
+          await navigator.clipboard.writeText(freshPrompt);
           copied = true;
         } catch {
           // Fall through to the synchronous fallback when supported.
@@ -1102,7 +1111,7 @@ function Detail({
       }
       if (!copied) {
         const textarea = document.createElement("textarea");
-        textarea.value = generationPrompt;
+        textarea.value = freshPrompt;
         textarea.setAttribute("readonly", "");
         textarea.style.position = "fixed";
         textarea.style.opacity = "0";
@@ -1159,7 +1168,7 @@ function Detail({
             <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
           </div>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
-          <div className="detail-metadata-row"><Field label="Recommended hashtags · 3–5"><textarea className="hashtags-editor" value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field><Field label="Source"><input value={values.source} onChange={(e) => update("source", e.target.value)} placeholder="Source" /></Field></div>
+          <div className="detail-metadata-row"><Field label="Recommended hashtags · maximum 4"><textarea className="hashtags-editor" value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field><Field label="Source"><input value={values.source} onChange={(e) => update("source", e.target.value)} placeholder="Source" /></Field></div>
         </div>
       </div>
       <section className="detail-content-section">
@@ -1196,7 +1205,7 @@ function Detail({
 type DetailValues = { title: string; url: string; source: string; score: number; postType: string; panelCount: number; setting: string; content: string; prompt: string; caption: string; hashtags: string; summary: string };
 function normalizeHashtags(value: string) {
   const cleaned = value.split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean).map((tag) => `#${tag.replace(/^#/, "").toLowerCase()}`);
-  return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
+  return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 4);
 }
 function formatPanelContent(value: string) {
   const firstPanel = value.search(/\bPanel\s*1\b/i);
