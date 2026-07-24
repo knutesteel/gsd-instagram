@@ -6,7 +6,7 @@ test("archiving never requires a Google Sheet lookup", () => {
   assert.equal(statusRequiresSheetLookup("Archived"), false);
 });
 
-test("archiving an identifier checks for and removes its sheet row", () => {
+test("archiving an identifier checks for and preserves its sheet row", () => {
   assert.equal(statusRequiresSheetLookup("Archived", true), true);
 });
 
