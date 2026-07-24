@@ -1050,14 +1050,20 @@ function Detail({
   const send = async () => { setBusy("sheet"); try { const result = await sendForGeneration(story.id, values) as { warnings?: string[] }; notify(result.warnings?.length ? `Article saved. ${result.warnings.join(" ")}` : "Article sent to the Google Sheet for generation.", result.warnings?.length ? "error" : "success"); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet.", "error"); } finally { setBusy(""); } };
   const generateContent = async () => {
     setBusy("generate");
+    let chatWindow: Window | null = null;
     try {
       if (promptLoading) throw new Error("Column J is still loading. Please try again in a moment.");
       if (!generationPrompt) throw new Error(promptLoadError || "Column J is empty for this article.");
+
+      // Reserve the tab synchronously while the button click still has user
+      // activation. Clipboard APIs may resolve after the popup allowance ends.
+      chatWindow = window.open("about:blank", "_blank");
+      if (!chatWindow) throw new Error("Your browser blocked the new ChatGPT window. Allow popups for this site and try again.");
+      chatWindow.opener = null;
+
       let copied = false;
       if (navigator.clipboard?.writeText && document.hasFocus()) {
         try {
-          // The prompt is preloaded so this call begins directly inside the
-          // button click's user-activation window.
           await navigator.clipboard.writeText(generationPrompt);
           copied = true;
         } catch {
@@ -1077,9 +1083,11 @@ function Detail({
         textarea.remove();
       }
       if (!copied) throw new Error("The browser blocked clipboard access. Keep this page active and click Generate Content again.");
-      const chatWindow = window.open("https://chatgpt.com/g/g-p-69e8effb73588191acaccbaed49a9d96/c/6a5fd350-e1f8-83ea-a391-a1e3cd4b4dcb", "_blank", "noopener,noreferrer");
-      notify(chatWindow ? "Column J copied to the clipboard and ChatGPT opened." : "Column J copied. Your browser blocked the new ChatGPT window.", chatWindow ? "success" : "error");
+
+      chatWindow.location.href = "https://chatgpt.com/g/g-p-69e8effb73588191acaccbaed49a9d96/c/6a5fd350-e1f8-83ea-a391-a1e3cd4b4dcb";
+      notify("Column J copied to the clipboard and ChatGPT opened.");
     } catch (error) {
+      if (chatWindow && !chatWindow.closed) chatWindow.close();
       notify(error instanceof Error ? error.message : "Couldn’t copy the generation prompt.", "error");
     } finally {
       setBusy("");
