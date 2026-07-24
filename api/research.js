@@ -10,7 +10,7 @@ const extractJson = (text) => {
   const parsed = JSON.parse(start >= 0 && end > start ? clean.slice(start, end + 1) : clean);
   return Array.isArray(parsed) ? parsed : parsed.stories ?? [];
 };
-const normalizeHashtags = (items) => Array.from(new Set(["#gsd-book", ...(Array.isArray(items) ? items : []).map((tag) => `#${String(tag).replace(/^#/, "").toLowerCase()}`).filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
+const normalizeHashtags = (items) => Array.from(new Set(["#gsd-book", ...(Array.isArray(items) ? items : []).map((tag) => `#${String(tag).replace(/^#/, "").toLowerCase()}`).filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 4);
 
 export const nextGenerationIdentifier = (rows) => {
   const identifiers = rows
