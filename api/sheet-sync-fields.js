@@ -30,6 +30,7 @@ export const sharedFieldsFromSheetRow = (row) => ({
     title: String(row[2] || ""),
     source_url: String(row[4] || ""),
     canonical_url: String(row[4] || ""),
+    source: String(row[17] || ""),
   },
   concept: {
     summary: String(row[5] || ""),
@@ -54,4 +55,5 @@ export const sharedSheetValuesFromApp = ({ article, concept }) => ({
     String(concept.caption || ""),
     Array.isArray(concept.hashtags) ? concept.hashtags.join(" ") : String(concept.hashtags || ""),
   ],
+  source: String(article.source || ""),
 });
