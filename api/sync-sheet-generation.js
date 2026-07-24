@@ -118,7 +118,7 @@ export default async function handler(req, res) {
   const user = await userResponse.json();
   try {
     const accessToken = await googleToken();
-    const sheet = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:Q")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    const sheet = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!sheet.ok) throw new Error("Couldn’t read the generation sheet.");
     const rows = (await sheet.json()).values ?? [];
     // Sheet status reconciliation is the primary responsibility of this route.
@@ -139,7 +139,7 @@ export default async function handler(req, res) {
     // later row from receiving its authoritative sheet status.
     for (const row of syncedRows) {
       const identifier = String(row[3]).trim();
-      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,source_url,canonical_url,generation_identifier,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
+      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,source_url,canonical_url,source,generation_identifier,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
       if (!articleResponse.ok) continue;
       const article = (await articleResponse.json())[0];
       const concept = article?.post_concepts?.[0];
@@ -167,7 +167,8 @@ export default async function handler(req, res) {
       // app saves use update-sheet-detail and write both stores immediately.
       const shared = sharedFieldsFromSheetRow(row);
       const articleFieldsChanged = String(article.title || "") !== shared.article.title
-        || String(article.source_url || article.canonical_url || "") !== shared.article.source_url;
+        || String(article.source_url || article.canonical_url || "") !== shared.article.source_url
+        || String(article.source || "") !== shared.article.source;
       if (articleFieldsChanged) {
         const metadataUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
           method: "PATCH",
