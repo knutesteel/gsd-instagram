@@ -40,6 +40,7 @@ type Story = {
   createdAt: string | null;
   overview: string;
   category: string;
+  source: string;
   score: number;
   url?: string;
   type: string;
@@ -95,6 +96,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     url: isTextOverview ? "" : row.source_url ?? row.canonical_url ?? "",
     overview: postConcept?.summary ?? "",
     category: row.category ?? "Uncategorized",
+    source: row.source ?? "",
     score: row.rank ?? 0,
     type: postConcept?.post_type ?? "carousel",
     featuredImage: featuredImageOverride || embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
@@ -136,7 +138,7 @@ function App() {
     if (!supabase) return [] as Story[];
     const { data, error } = await supabase
       .from("articles")
-      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
+      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
       .order("created_at", { ascending: false });
     if (error) throw new Error(`Couldn’t load your queue: ${error.message}`);
     const conceptIds = (data ?? []).map((row: any) => conceptFromArticle(row)?.id).filter(Boolean);
@@ -265,14 +267,19 @@ function App() {
     setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item));
     if (id === selected) await loadConcept(id);
   };
-  const saveDetail = async (articleId: string, values: { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; caption: string; prompt: string; hashtags: string; summary: string }) => {
+  const saveDetail = async (articleId: string, values: DetailValues) => {
     if (!supabase) return;
-    const articleUpdate = await supabase.from("articles").update({ title: values.title, source_url: values.url, canonical_url: values.url, rank: values.score }).eq("id", articleId);
-    if (articleUpdate.error) throw new Error(articleUpdate.error.message);
     const hashtags = normalizeHashtags(values.hashtags);
-    const conceptUpdate = await supabase.from("post_concepts").update({ summary: values.summary, post_type: values.postType, panel_count: values.panelCount, image_summary: { ...(concept?.image_summary ?? {}), setting: values.setting, content: values.content }, detailed_prompt: values.prompt, caption: values.caption, hashtags }).eq("article_id", articleId);
-    if (conceptUpdate.error) throw new Error(conceptUpdate.error.message);
-    setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, score: values.score, type: values.postType } : item));
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/update-sheet-detail", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
+      body: JSON.stringify({ articleId, values: { ...values, hashtags } }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error ?? "Couldn’t synchronize article changes.");
+    setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, source: values.source, score: values.score, type: values.postType } : item));
     await loadConcept(articleId);
   };
   const sendForGeneration = async (articleId: string, values: DetailValues) => {
@@ -698,7 +705,7 @@ function Dashboard({
               </div>
               {item.generationIdentifier && item.generationSheetRow ? <a className="identifier-link" href={`https://docs.google.com/spreadsheets/d/1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ/edit#gid=0&range=D${item.generationSheetRow}`} target="_blank" rel="noreferrer">{item.generationIdentifier}</a> : <span className="identifier-empty">—</span>}
               <time className="date-added" dateTime={item.createdAt ?? undefined}>{formatAddedDate(item.createdAt)}</time>
-              <span className="chip">{item.category}</span>
+              <div><span className="chip">{item.category}</span>{item.source && <small className="story-source">{item.source}</small>}</div>
               <span className="score">{item.score}</span>
               <span className="type">{item.type}</span>
               <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select>
@@ -746,7 +753,7 @@ function ArticleList({
       {groups.map(([status, stories]) => <section className="article-status-group" key={status}>
         <header><h2>{status}</h2><span>{stories.length} {stories.length === 1 ? "article" : "articles"}</span></header>
         <div className="article-list-grid">{stories.map((item) => <article className="article-list-card" key={item.id}>
-          <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}{item.generationIdentifier ? ` (${item.generationIdentifier})` : ""}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span></div>
+          <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}{item.generationIdentifier ? ` (${item.generationIdentifier})` : ""}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span>{item.source && <span className="status-pill source-pill">{item.source}</span>}</div>
           <ArticleThumbnail item={item} />
         </article>)}</div>
       </section>)}
@@ -836,6 +843,7 @@ function Discover({
   const [mode, setMode] = useState<"system" | "manual" | "overview">("overview");
   const [manualUrl, setManualUrl] = useState("");
   const [overview, setOverview] = useState("");
+  const [source, setSource] = useState("");
   const [savedSearchPrompt, setSavedSearchPrompt] = useState(loadSavedPrompt);
   const [searchText, setSearchText] = useState(loadSavedPrompt);
   const [topicInput, setTopicInput] = useState("");
@@ -893,7 +901,7 @@ function Discover({
     }
     setSearching(true);
     try {
-      const result = await research({ mode, manualUrl: manualUrl.trim(), overview: overview.trim(), searchText: searchText.trim(), topics });
+      const result = await research({ mode, manualUrl: manualUrl.trim(), overview: overview.trim(), source: source.trim(), searchText: searchText.trim(), topics });
       setQueued(mode === "manual" || mode === "overview" ? [mode === "overview" ? "Overview interpreted" : "Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
       notify(`${result.count} ${result.count === 1 ? "story" : "stories"} added to your dashboard.`);
       if ((mode === "manual" || mode === "overview") && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
@@ -918,7 +926,7 @@ function Discover({
             <button className={mode === "overview" ? "selected" : ""} onClick={() => setMode("overview")}>Text overview</button>
             <button className={mode === "system" ? "selected" : ""} onClick={() => setMode("system")}>System Search</button>
           </div>
-          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field> : <><Field label="What should we search for?"><textarea className="overview-editor" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Describe the stories the system should find." /></Field>
+          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <><Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field><Field label="Source"><input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Where this idea came from" /></Field></> : <><Field label="What should we search for?"><textarea className="overview-editor" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Describe the stories the system should find." /></Field>
           <p className="field-label">Topics</p>
           <div className="chips">
             {topics.map((topic) => <span key={topic}>{topic} <button aria-label={`Remove ${topic}`} onClick={() => setTopics(topics.filter((item) => item !== topic))}><FiX /></button></span>)}
@@ -1151,7 +1159,7 @@ function Detail({
             <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
           </div>
           <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
-          <Field label="Recommended hashtags · 3–5"><textarea className="hashtags-editor" value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field>
+          <div className="detail-metadata-row"><Field label="Recommended hashtags · 3–5"><textarea className="hashtags-editor" value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field><Field label="Source"><input value={values.source} onChange={(e) => update("source", e.target.value)} placeholder="Source" /></Field></div>
         </div>
       </div>
       <section className="detail-content-section">
@@ -1185,7 +1193,7 @@ function Detail({
     </section>
   );
 }
-type DetailValues = { title: string; url: string; score: number; postType: string; panelCount: number; setting: string; content: string; prompt: string; caption: string; hashtags: string; summary: string };
+type DetailValues = { title: string; url: string; source: string; score: number; postType: string; panelCount: number; setting: string; content: string; prompt: string; caption: string; hashtags: string; summary: string };
 function normalizeHashtags(value: string) {
   const cleaned = value.split(/[\s,]+/).map((tag) => tag.trim()).filter(Boolean).map((tag) => `#${tag.replace(/^#/, "").toLowerCase()}`);
   return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 5);
@@ -1207,7 +1215,7 @@ function detailValues(story: Story, concept: Concept | null): DetailValues {
   const panelContent = formatPanelContent(image.content ?? concept?.detailed_prompt ?? "");
   const settingLine = image.setting ? `Setting: ${image.setting}` : "";
   const content = /^\s*Setting\s*:/i.test(panelContent) ? panelContent : [settingLine, panelContent].filter(Boolean).join("\n\n");
-  return { title: story.title, url: story.url ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" "), summary: concept?.summary ?? story.overview ?? "" };
+  return { title: story.title, url: story.url ?? "", source: story.source ?? "", score: story.score, postType: concept?.post_type ?? story.type, panelCount: concept?.panel_count ?? 5, setting: image.setting ?? [image.location, image.time_of_day].filter(Boolean).join(" · "), content, prompt: concept?.detailed_prompt ?? "", caption: concept?.caption ?? "", hashtags: normalizeHashtags((concept?.hashtags ?? []).join(" ")).join(" "), summary: concept?.summary ?? story.overview ?? "" };
 }
 function Field({
   label,
