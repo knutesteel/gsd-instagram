@@ -90,9 +90,6 @@ export default async function handler(req, res) {
     if (article.generation_identifier) {
       sheetAccessToken = await googleAccessToken();
       sheetRow = await findSheetRow(sheetAccessToken, article.generation_identifier);
-      if (!sheetRow && article.status !== "new" && article.status !== "discarded") {
-        throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
-      }
       if (sheetRow) {
         const shared = sharedSheetValuesFromApp(proposed);
         const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
@@ -136,7 +133,12 @@ export default async function handler(req, res) {
         throw new Error("The Google Sheet did not verify the saved values. Please retry; no success was recorded.");
       }
     }
-    return res.status(200).json({ synchronized: Boolean(sheetRow), sheetRow, verified: true });
+    return res.status(200).json({
+      synchronized: Boolean(sheetRow),
+      sheetRow,
+      verified: true,
+      repairRequired: Boolean(article.generation_identifier && !sheetRow && article.status !== "new" && article.status !== "discarded"),
+    });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t synchronize article changes." });
   }
