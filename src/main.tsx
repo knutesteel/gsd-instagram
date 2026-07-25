@@ -17,6 +17,7 @@ import {
   FiPlus,
   FiRefreshCw,
   FiSearch,
+  FiStar,
   FiTrash2,
   FiX,
 } from "react-icons/fi";
@@ -42,6 +43,7 @@ type Story = {
   category: string;
   source: string;
   postHandoffAt: string | null;
+  isFavorite: boolean;
   score: number;
   url?: string;
   type: string;
@@ -99,6 +101,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     category: row.category ?? "Uncategorized",
     source: row.source ?? "",
     postHandoffAt: row.post_handoff_at ?? null,
+    isFavorite: Boolean(row.is_favorite),
     score: row.rank ?? 0,
     type: postConcept?.post_type ?? "carousel",
     featuredImage: featuredImageOverride || embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
@@ -140,7 +143,7 @@ function App() {
     if (!supabase) return [] as Story[];
     const { data, error } = await supabase
       .from("articles")
-      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,post_handoff_at,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
+      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,post_handoff_at,is_favorite,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
       .order("created_at", { ascending: false });
     if (error) throw new Error(`Couldn’t load your queue: ${error.message}`);
     const conceptIds = (data ?? []).map((row: any) => conceptFromArticle(row)?.id).filter(Boolean);
@@ -342,6 +345,12 @@ function App() {
     if (error) throw new Error(`Couldn’t record the Instagram handoff: ${error.message}`);
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, postHandoffAt } : item));
   };
+  const toggleFavorite = async (articleId: string, isFavorite: boolean) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { error } = await supabase.from("articles").update({ is_favorite: isFavorite }).eq("id", articleId);
+    if (error) throw new Error(`Couldn’t update favorite: ${error.message}`);
+    setItems((old) => old.map((item) => item.id === articleId ? { ...item, isFavorite } : item));
+  };
   const approveGeneratedContent = async (articleId: string) => {
     if (!supabase) return;
     const { data } = await supabase.auth.getSession(); if (!data.session) throw new Error("Please sign in again.");
@@ -443,6 +452,7 @@ function App() {
             refreshStatus={() => void syncGeneratedContent().then(() => notify("Status and generated content refreshed from the Google Sheet.")).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t refresh status."))}
             statusFilter={articleStatusFilter}
             setStatusFilter={setArticleStatusFilter}
+            toggleFavorite={(id, isFavorite) => void toggleFavorite(id, isFavorite).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update favorite.", "error"))}
           />
         )}
         {screen === "articles" && (
@@ -478,6 +488,7 @@ function App() {
             syncGeneratedContent={syncGeneratedContent}
             approveGeneratedContent={approveGeneratedContent}
             markPostHandoff={markPostHandoff}
+            toggleFavorite={(isFavorite) => toggleFavorite(active.id, isFavorite)}
           />
         )}
         {screen === "archive" && (
@@ -620,6 +631,7 @@ function Dashboard({
   refreshStatus,
   statusFilter,
   setStatusFilter,
+  toggleFavorite,
 }: {
   items: Story[];
   statusMismatches: StatusMismatch[];
@@ -630,14 +642,16 @@ function Dashboard({
   refreshStatus: () => void;
   statusFilter: "all" | Story["status"];
   setStatusFilter: (value: "all" | Story["status"]) => void;
+  toggleFavorite: (id: string, isFavorite: boolean) => void;
 }) {
   const [filter, setFilter] = useState("");
   const [category, setCategory] = useState("all");
   const [type, setType] = useState("all");
   const [minimumScore, setMinimumScore] = useState("0");
   const [dateSort, setDateSort] = useState<"newest" | "oldest">("newest");
+  const [favoriteFilter, setFavoriteFilter] = useState<"all" | "favorites" | "not-favorites">("all");
   const shown = items
-    .filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore) && (statusFilter === "all" || i.status === statusFilter))
+    .filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore) && (statusFilter === "all" || i.status === statusFilter) && (favoriteFilter === "all" || (favoriteFilter === "favorites" ? i.isFavorite : !i.isFavorite)))
     .sort((a, b) => {
       const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
       const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -691,6 +705,7 @@ function Dashboard({
         <select value={minimumScore} onChange={(e) => setMinimumScore(e.target.value)}><option value="0">Any score</option><option value="90">90+</option><option value="75">75+</option><option value="60">60+</option></select>
         <select value={type} onChange={(e) => setType(e.target.value)}><option value="all">All post types</option>{types.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | Story["status"])} aria-label="Filter by status"><option value="all">All statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option></select>
+        <select value={favoriteFilter} onChange={(e) => setFavoriteFilter(e.target.value as "all" | "favorites" | "not-favorites")} aria-label="Filter by favorite"><option value="all">All items</option><option value="favorites">Favorites</option><option value="not-favorites">Not favorites</option></select>
         <select value={dateSort} onChange={(e) => setDateSort(e.target.value as "newest" | "oldest")} aria-label="Sort by date added"><option value="newest">Date added: Newest first</option><option value="oldest">Date added: Oldest first</option></select>
       </div>
       <div className="story-table">
@@ -710,7 +725,7 @@ function Dashboard({
           {stories.map((item) => (
             <div className="story-row" key={item.id}>
               <div>
-                <h3><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
+                <h3><button type="button" className={`favorite-star ${item.isFavorite ? "active" : ""}`} aria-label={item.isFavorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={item.isFavorite} onClick={() => toggleFavorite(item.id, !item.isFavorite)}><FiStar /></button><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
                 <p>{item.overview}</p>
               </div>
               {item.generationIdentifier ? (item.generationSheetRow ? <a className="identifier-link" href={`https://docs.google.com/spreadsheets/d/1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ/edit#gid=0&range=D${item.generationSheetRow}`} target="_blank" rel="noreferrer">{item.generationIdentifier}</a> : <span>{item.generationIdentifier}</span>) : <span className="identifier-empty">—</span>}
@@ -1027,6 +1042,7 @@ function Detail({
   syncGeneratedContent,
   approveGeneratedContent,
   markPostHandoff,
+  toggleFavorite,
   notify,
 }: {
   story: Story;
@@ -1040,6 +1056,7 @@ function Detail({
   syncGeneratedContent: () => Promise<void>;
   approveGeneratedContent: (articleId: string) => Promise<void>;
   markPostHandoff: (articleId: string) => Promise<void>;
+  toggleFavorite: (isFavorite: boolean) => Promise<void>;
   notify: Notify;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
@@ -1193,6 +1210,7 @@ function Detail({
             Next <FiArrowRight />
           </button>
           </div>
+          <button type="button" className={`favorite-star detail-favorite ${story.isFavorite ? "active" : ""}`} aria-label={story.isFavorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={story.isFavorite} onClick={() => void toggleFavorite(!story.isFavorite).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update favorite.", "error"))}><FiStar /> {story.isFavorite ? "Favorite" : "Add favorite"}</button>
           <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select></label>
           <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
           {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}
