@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   appPostType,
   sharedFieldsFromSheetRow,
+  sharedSheetRowMatches,
   sharedSheetValuesFromApp,
 } from "./sheet-sync-fields.js";
 
@@ -58,4 +59,19 @@ test("caps imported and exported hashtags at four", () => {
     concept: { hashtags: ["#one", "#two", "#three", "#four", "#five"] },
   });
   assert.equal(exported.secondRange[1], "#one #two #three #four");
+});
+
+test("verifies the exact shared values written to a sheet row", () => {
+  const shared = sharedSheetValuesFromApp({
+    article: { title: "Title", source_url: "https://example.com", source: "Podcast" },
+    concept: {
+      summary: "Summary", panel_count: 3, post_type: "carousel",
+      image_summary: { content: "Content" }, caption: "Updated caption",
+      hashtags: ["#one", "#two"],
+    },
+  });
+  const row = ["date", "Generated", "Title", "29", "https://example.com", "Summary", "3", "Carousel", "Content", "formula", "Updated caption", "#one #two", "", "", "", "", "", "Podcast"];
+  assert.equal(sharedSheetRowMatches(row, "29", shared), true);
+  row[10] = "Stale caption";
+  assert.equal(sharedSheetRowMatches(row, "29", shared), false);
 });
