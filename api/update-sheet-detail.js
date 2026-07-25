@@ -1,5 +1,5 @@
 import { createPrivateKey, sign } from "node:crypto";
-import { sharedSheetValuesFromApp } from "./sheet-sync-fields.js";
+import { sharedSheetRowMatches, sharedSheetValuesFromApp } from "./sheet-sync-fields.js";
 
 const spreadsheetId = "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
@@ -35,6 +35,15 @@ async function findSheetRow(accessToken, identifier) {
   const rows = (await response.json()).values ?? [];
   const index = rows.findIndex((row) => String(row[0] || "").trim() === String(identifier).trim());
   return index >= 0 ? index + 1 : null;
+}
+
+async function readSheetRow(accessToken, row) {
+  const response = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!A${row}:R${row}`)}?valueRenderOption=UNFORMATTED_VALUE`,
+    { headers: { Authorization: `Bearer ${accessToken}`, "Cache-Control": "no-cache" } },
+  );
+  if (!response.ok) throw new Error("Couldn’t verify changes in the generation Google Sheet.");
+  return (await response.json()).values?.[0] ?? [];
 }
 
 export default async function handler(req, res) {
@@ -77,9 +86,10 @@ export default async function handler(req, res) {
     };
 
     let sheetRow = null;
+    let sheetAccessToken = null;
     if (article.generation_identifier) {
-      const accessToken = await googleAccessToken();
-      sheetRow = await findSheetRow(accessToken, article.generation_identifier);
+      sheetAccessToken = await googleAccessToken();
+      sheetRow = await findSheetRow(sheetAccessToken, article.generation_identifier);
       if (!sheetRow && article.status !== "new" && article.status !== "discarded") {
         throw new Error(`Couldn’t find identifier #${article.generation_identifier} in the Google Sheet.`);
       }
@@ -87,7 +97,7 @@ export default async function handler(req, res) {
         const shared = sharedSheetValuesFromApp(proposed);
         const update = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
           method: "POST",
-          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          headers: { Authorization: `Bearer ${sheetAccessToken}`, "Content-Type": "application/json" },
           body: JSON.stringify({
             valueInputOption: "RAW",
             data: [
@@ -101,19 +111,32 @@ export default async function handler(req, res) {
       }
     }
 
-    const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
+    const articleUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=title,source_url,canonical_url,source,rank`, {
       method: "PATCH",
-      headers: { ...headers, Prefer: "return=minimal" },
+      headers: { ...headers, Prefer: "return=representation" },
       body: JSON.stringify(proposed.article),
     });
     if (!articleUpdate.ok) throw new Error("Couldn’t save article changes in the app.");
-    const conceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${encodeURIComponent(concept.id)}`, {
+    const savedArticle = (await articleUpdate.json())[0];
+    const conceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${encodeURIComponent(concept.id)}&select=summary,panel_count,post_type,image_summary,detailed_prompt,caption,hashtags`, {
       method: "PATCH",
-      headers: { ...headers, Prefer: "return=minimal" },
+      headers: { ...headers, Prefer: "return=representation" },
       body: JSON.stringify(proposed.concept),
     });
     if (!conceptUpdate.ok) throw new Error("Couldn’t save content changes in the app.");
-    return res.status(200).json({ synchronized: Boolean(sheetRow), sheetRow });
+    const savedConcept = (await conceptUpdate.json())[0];
+    const expectedShared = sharedSheetValuesFromApp(proposed);
+    const savedShared = sharedSheetValuesFromApp({ article: savedArticle || {}, concept: savedConcept || {} });
+    if (JSON.stringify(savedShared) !== JSON.stringify(expectedShared)) {
+      throw new Error("The app did not verify the saved values. Please retry; no success was recorded.");
+    }
+    if (sheetRow) {
+      const verifiedRow = await readSheetRow(sheetAccessToken, sheetRow);
+      if (!sharedSheetRowMatches(verifiedRow, article.generation_identifier, expectedShared)) {
+        throw new Error("The Google Sheet did not verify the saved values. Please retry; no success was recorded.");
+      }
+    }
+    return res.status(200).json({ synchronized: Boolean(sheetRow), sheetRow, verified: true });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t synchronize article changes." });
   }
