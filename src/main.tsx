@@ -334,8 +334,10 @@ function App() {
       } : current);
     }
     if (Array.isArray(result.syncErrors) && result.syncErrors.length) {
-      const identifiers = result.syncErrors.map((item: { identifier?: string }) => `#${item.identifier ?? "?"}`).join(", ");
-      throw new Error(`Sheet synchronization completed with errors for ${identifiers}. Other rows were still synchronized.`);
+      const details = result.syncErrors
+        .map((item: { identifier?: string; error?: string }) => `#${item.identifier ?? "?"}: ${item.error ?? "Synchronization failed."}`)
+        .join(" ");
+      throw new Error(`Sheet synchronization completed with errors. ${details}`);
     }
     return result;
     } finally {
@@ -1070,6 +1072,9 @@ function Detail({
   const [promptLoading, setPromptLoading] = useState(true);
   const [promptLoadError, setPromptLoadError] = useState("");
   const [dirty, setDirty] = useState(false);
+  const valuesRef = useRef(values);
+  const dirtyRef = useRef(false);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Prefer app-storage copies. If any cannot be signed, retain the Drive image
   // URLs as a fallback instead of rendering an empty gallery.
   const renderedImages = Array.isArray(concept?.image_summary?.rendered_images) ? concept.image_summary.rendered_images.filter(Boolean) : [];
@@ -1084,11 +1089,18 @@ function Detail({
   const lockedAfterSheetSend = sendComplete;
   const isTextOverview = concept?.image_summary?.origin === "text_overview";
   useEffect(() => {
-    setValues(detailValues(story, concept));
+    const nextValues = detailValues(story, concept);
+    setValues(nextValues);
+    valuesRef.current = nextValues;
+    dirtyRef.current = false;
     setDirty(false);
   }, [story.id]);
   useEffect(() => {
-    if (!dirty) setValues(detailValues(story, concept));
+    if (!dirty) {
+      const nextValues = detailValues(story, concept);
+      setValues(nextValues);
+      valuesRef.current = nextValues;
+    }
   }, [story, concept, dirty]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
   useEffect(() => {
@@ -1118,19 +1130,45 @@ function Detail({
     return () => { cancelled = true; };
   }, [story.id, story.status]);
   const update = (key: keyof DetailValues, value: string | number) => {
+    dirtyRef.current = true;
     setDirty(true);
-    setValues((old) => ({ ...old, [key]: value }));
+    setValues((old) => {
+      const nextValues = { ...old, [key]: value };
+      valuesRef.current = nextValues;
+      return nextValues;
+    });
   };
-  const save = async () => {
+  const save = async (quiet = false) => {
+    if (!dirtyRef.current) return;
+    const articleId = story.id;
+    const snapshot = valuesRef.current;
+    dirtyRef.current = false;
     setBusy("save");
+    const operation = saveQueueRef.current.catch(() => undefined).then(async () => {
+      try {
+        await saveDetail(articleId, snapshot);
+        if (valuesRef.current === snapshot) setDirty(false);
+        if (!quiet) notify(story.generationIdentifier ? "Changes verified in the app and Google Sheet." : "Changes saved in the app.");
+      } catch (error) {
+        dirtyRef.current = true;
+        setDirty(true);
+        notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error");
+        throw error;
+      } finally {
+        setBusy("");
+      }
+    });
+    saveQueueRef.current = operation;
+    return operation;
+  };
+  const saveOnBlur = () => { if (dirtyRef.current) void save(true); };
+  const navigateAfterSave = async (navigate: () => void) => {
     try {
-      await saveDetail(story.id, values);
-      setDirty(false);
-      notify(story.generationIdentifier ? "Changes verified in the app and Google Sheet." : "Changes saved in the app.");
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error");
-    } finally {
-      setBusy("");
+      if (dirtyRef.current) await save(true);
+      else await saveQueueRef.current;
+      navigate();
+    } catch {
+      // Stay on this record when the save could not be verified.
     }
   };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
@@ -1228,10 +1266,10 @@ function Detail({
       <div className="detail-top">
         <div className="detail-actions">
           <div className="detail-navigation">
-          <button onClick={previous}>
+          <button onClick={() => void navigateAfterSave(previous)}>
             <FiArrowLeft /> Previous
           </button>
-          <button onClick={next}>
+          <button onClick={() => void navigateAfterSave(next)}>
             Next <FiArrowRight />
           </button>
           </div>
@@ -1240,22 +1278,22 @@ function Detail({
           <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
           {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}
           <button onClick={rerun} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : isTextOverview ? "Regenerate suggestion" : "Regenerate analysis"}</button>
-          <button onClick={save} disabled={Boolean(busy) || !dirty}><FiCheck /> {busy === "save" ? "Saving…" : dirty ? "Save changes" : "Changes saved"}</button>
+          <button onClick={() => void save()} disabled={Boolean(busy) || !dirty}><FiCheck /> {busy === "save" ? "Saving…" : dirty ? "Save changes" : "Changes saved"}</button>
         </div>
       </div>
       <div className="detail-fields">
         <div className="left-fields detail-editor-fields">
-          <Field label={isTextOverview ? "Suggestion title" : "Article title"}><input value={values.title} onChange={(e) => update("title", e.target.value)} /></Field>
-          <Field label={isTextOverview ? "Overview summary" : "Article Summary"}><textarea className="summary-editor" value={values.summary} onChange={(e) => update("summary", e.target.value)} placeholder={isTextOverview ? "A concise summary of the post idea" : "A two-to-three sentence article summary"} /></Field>
+          <Field label={isTextOverview ? "Suggestion title" : "Article title"}><input value={values.title} onChange={(e) => update("title", e.target.value)} onBlur={saveOnBlur} /></Field>
+          <Field label={isTextOverview ? "Overview summary" : "Article Summary"}><textarea className="summary-editor" value={values.summary} onChange={(e) => update("summary", e.target.value)} onBlur={saveOnBlur} placeholder={isTextOverview ? "A concise summary of the post idea" : "A two-to-three sentence article summary"} /></Field>
           <div className="detail-metadata-row">
-            <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} placeholder={isTextOverview ? "No article linked" : "https://example.com/article"} disabled={isTextOverview} /></Field>
+            <Field label="Source URL"><input type="url" value={values.url} onChange={(e) => update("url", e.target.value)} onBlur={saveOnBlur} placeholder={isTextOverview ? "No article linked" : "https://example.com/article"} disabled={isTextOverview} /></Field>
             <Field label="Identifier"><input value={story.generationIdentifier ?? ""} placeholder="Not assigned" readOnly /></Field>
-            <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)}><option value="carousel">Carousel</option><option value="single_image">Single Image</option><option value="multi_pane_cartoon">Multi-pane Cartoon</option><option value="reel">Reel</option></select></Field>
-            <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} /></Field>
-            <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} /></Field>
+            <Field label="Type"><select value={values.postType} onChange={(e) => update("postType", e.target.value)} onBlur={saveOnBlur}><option value="carousel">Carousel</option><option value="single_image">Single Image</option><option value="multi_pane_cartoon">Multi-pane Cartoon</option><option value="reel">Reel</option></select></Field>
+            <Field label="Score"><input type="number" min="1" max="100" value={values.score} onChange={(e) => update("score", Number(e.target.value))} onBlur={saveOnBlur} /></Field>
+            <Field label="Panel Count"><input type="number" min="1" max="10" value={values.panelCount} onChange={(e) => update("panelCount", Number(e.target.value))} onBlur={saveOnBlur} /></Field>
           </div>
-          <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} /></Field>
-          <div className="detail-metadata-row"><Field label="Recommended hashtags · maximum 4"><textarea className="hashtags-editor" value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} placeholder="#gsd-book #focus #productivity" /></Field><Field label="Source"><input value={values.source} onChange={(e) => update("source", e.target.value)} placeholder="Source" /></Field></div>
+          <Field label="Caption"><textarea className="caption-editor" value={values.caption} onChange={(e) => update("caption", e.target.value)} onBlur={saveOnBlur} /></Field>
+          <div className="detail-metadata-row"><Field label="Recommended hashtags · maximum 4"><textarea className="hashtags-editor" value={values.hashtags} onChange={(e) => update("hashtags", e.target.value)} onBlur={saveOnBlur} placeholder="#gsd-book #focus #productivity" /></Field><Field label="Source"><input value={values.source} onChange={(e) => update("source", e.target.value)} onBlur={saveOnBlur} placeholder="Source" /></Field></div>
         </div>
       </div>
       <section className="detail-content-section">
@@ -1280,7 +1318,7 @@ function Detail({
             }} /></button>)}</div>}
           </div>
           <div className="generated-post-copy"><b>Post Comment</b><p>{values.caption || "No post comment provided."}</p><b>Hashtags</b><p>{values.hashtags || "No hashtags provided."}</p></div>
-        </div> : <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>}
+        </div> : <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} onBlur={saveOnBlur} /></Field>}
         <div className="generation-step-actions">
           <button className={sendComplete ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || sendComplete}><FiExternalLink /> {sendComplete ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
           <button className={generationComplete ? "button complete wide" : "button wide"} onClick={() => void generateContent()} disabled={Boolean(busy) || promptLoading || generationComplete || story.status !== "Sent to Sheets"}><FiCopy /> {generationComplete ? "Generate Content Complete" : promptLoading ? "Loading Column J…" : busy === "generate" ? "Copying…" : "Generate Content"}</button>
