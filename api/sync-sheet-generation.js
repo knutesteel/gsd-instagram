@@ -136,6 +136,7 @@ export default async function handler(req, res) {
     const statusMismatches = [];
     const imagesByArticleId = {};
     const enrichmentQueue = [];
+    const syncErrors = [];
 
     // Pass 1: reconcile every identifier's status before doing any image
     // downloads. Image work can be slow or fail, but it must never prevent a
@@ -143,11 +144,12 @@ export default async function handler(req, res) {
     for (const row of syncedRows) {
       const identifier = String(row[3]).trim();
       const rowNumber = currentSheetRowNumber(rows, row);
+      try {
       const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,source_url,canonical_url,source,generation_identifier,generation_sheet_row,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
-      if (!articleResponse.ok) continue;
+      if (!articleResponse.ok) throw new Error("Couldn’t load the matching app record.");
       const article = (await articleResponse.json())[0];
       const concept = article?.post_concepts?.[0];
-      if (!concept) continue;
+      if (!concept) throw new Error("The matching app record or content is missing.");
 
       const normalizedStatus = normalizeSheetStatus(row[1]);
       if (!normalizedStatus) continue;
@@ -234,6 +236,12 @@ export default async function handler(req, res) {
         sourceImages,
         images,
       });
+      } catch (error) {
+        syncErrors.push({
+          identifier,
+          error: error instanceof Error ? error.message : "This row could not be synchronized.",
+        });
+      }
     }
 
     // Pass 2: synchronize captions and image references for every status,
@@ -277,6 +285,6 @@ export default async function handler(req, res) {
     } catch (error) {
       restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
     }
-    return res.status(200).json({ updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning });
+    return res.status(200).json({ updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning, syncErrors });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
 }
