@@ -24,6 +24,22 @@ const normalizeSheetStatus = (value) => {
 };
 const appStatusLabel = (value) => ({ sent_to_sheets: "Sent to Sheets", generated: "Generated", approved_to_post: "Approved", posted: "Posted", new: "New", discarded: "Archived" }[value] || String(value || "Unknown"));
 export const currentSheetRowNumber = (rows, row) => rows.indexOf(row) + 1;
+export const isNumericIdentifier = (value) => /^\d+$/.test(String(value ?? "").trim());
+export const uniqueNumericSheetRows = (rows) => {
+  const byIdentifier = new Map();
+  const duplicates = new Set();
+  for (const row of rows.slice(1)) {
+    if (!normalizeSheetStatus(row[1]) || !isNumericIdentifier(row[3])) continue;
+    const identifier = String(row[3]).trim();
+    if (byIdentifier.has(identifier)) {
+      duplicates.add(identifier);
+      continue;
+    }
+    byIdentifier.set(identifier, row);
+  }
+  for (const identifier of duplicates) byIdentifier.delete(identifier);
+  return { rows: [...byIdentifier.values()], duplicateIdentifiers: [...duplicates] };
+};
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -129,14 +145,20 @@ export default async function handler(req, res) {
     // identifier from moving to Generated/Approved/Posted.
     let restoredIdentifiers = [];
     let restorationWarning = null;
-    const syncedRows = rows.slice(1).filter((row) => normalizeSheetStatus(row[1]) && row[3]);
+    // Numeric app identifiers are the sole synchronization key. Legacy letter
+    // values are repaired below; they are never queried as current identities.
+    const canonicalRows = uniqueNumericSheetRows(rows);
+    const syncedRows = canonicalRows.rows;
     if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {}, statusMismatches: [], restoredIdentifiers });
     const updatedArticleIds = [];
     const statuses = {};
     const statusMismatches = [];
     const imagesByArticleId = {};
     const enrichmentQueue = [];
-    const syncErrors = [];
+    const syncErrors = canonicalRows.duplicateIdentifiers.map((identifier) => ({
+      identifier,
+      error: `Duplicate spreadsheet rows use identifier #${identifier}. Neither row was synchronized.`,
+    }));
 
     // Pass 1: reconcile every identifier's status before doing any image
     // downloads. Image work can be slow or fail, but it must never prevent a
