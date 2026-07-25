@@ -1048,56 +1048,14 @@ function Detail({
   const isTextOverview = concept?.image_summary?.origin === "text_overview";
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
-  useEffect(() => {
-    let cancelled = false;
+  const loadGenerationPrompt = async () => {
     setGenerationPrompt("");
     setPromptLoadError("");
     setPromptLoading(true);
-    void (async () => {
-      try {
-        if (!supabase) throw new Error("Supabase is not configured.");
-        const { data } = await supabase.auth.getSession();
-        if (!data.session) throw new Error("Please sign in again.");
-        const response = await fetch("/api/generation-prompt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-          body: JSON.stringify({ articleId: story.id }),
-        });
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
-        if (!cancelled) setGenerationPrompt(String(result.prompt ?? ""));
-      } catch (error) {
-        if (!cancelled) setPromptLoadError(error instanceof Error ? error.message : "Couldn’t retrieve the generation prompt.");
-      } finally {
-        if (!cancelled) setPromptLoading(false);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [story.id]);
-  const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
-  const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error"); } finally { setBusy(""); } };
-  const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
-  const send = async () => { setBusy("sheet"); try { const result = await sendForGeneration(story.id, values) as { warnings?: string[] }; notify(result.warnings?.length ? `Article saved. ${result.warnings.join(" ")}` : "Article sent to the Google Sheet for generation.", result.warnings?.length ? "error" : "success"); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet.", "error"); } finally { setBusy(""); } };
-  const generateContent = async () => {
-    setBusy("generate");
-    let chatWindow: Window | null = null;
     try {
-      // Reserve the tab synchronously while the button click still has user
-      // activation. Clipboard APIs may resolve after the popup allowance ends.
-      chatWindow = window.open("about:blank", "_blank");
-      if (!chatWindow) throw new Error("Your browser blocked the new ChatGPT window. Allow popups for this site and try again.");
-      chatWindow.opener = null;
-      if (!supabase) throw new Error("Supabase is not configured.");
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) throw new Error("Please sign in again.");
-      const response = await fetch("/api/generation-prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-        body: JSON.stringify({ articleId: story.id }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
-      const freshPrompt = String(result.prompt ?? "");
+      if (promptLoading) throw new Error("Column J is still loading. Try again in a moment.");
+      if (promptLoadError) throw new Error(promptLoadError);
+      const freshPrompt = generationPrompt;
       if (!freshPrompt) throw new Error("Column J is empty for this article.");
 
       let copied = false;
