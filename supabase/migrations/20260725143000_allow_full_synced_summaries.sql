@@ -1,1 +1,2 @@
-sed: can't read supabase/migrations/20260725143000_allow_full_synced_summaries.sql: No such file or directory
+alter table public.post_concepts
+drop constraint if exists post_concepts_summary_check;
