@@ -54,6 +54,10 @@ async function nextSequentialIdentifier(accessToken, databaseIdentifiers = []) {
   return String((current.length ? Math.max(...current) : 0) + 1);
 }
 const cellValue = (value) => String(value ?? "").trim();
+export const numericSheetIdentifier = (value) => {
+  const identifier = numericIdentifier(value);
+  return identifier ? Number(identifier) : "";
+};
 export function locateGenerationRow(rows, identifier) {
   const existingIndex = rows.findIndex((row, rowIndex) => rowIndex > 0 && cellValue(row[3]) === cellValue(identifier));
   if (existingIndex >= 0) return { row: existingIndex + 1, exists: true };
@@ -186,7 +190,7 @@ export default async function handler(req, res) {
       new Date().toISOString().slice(0, 10),
       "Pending",
       article.title,
-      identifier,
+      numericSheetIdentifier(identifier),
       url,
       concept.summary,
       concept.panel_count || 1,
