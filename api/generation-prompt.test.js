@@ -24,3 +24,11 @@ test("returns column J when the matching article is the first row returned", () 
     { found: true, prompt: "prompt twenty-four" },
   );
 });
+
+test("a sent status is not evidence that a sheet row exists", () => {
+  const result = promptForIdentifier(
+    [["Identifier", "URL", "Summary", "Panels", "Type", "Overview", "Prompt"], ["29", "", "", "", "", "", "prompt 29"]],
+    "30",
+  );
+  assert.deepEqual(result, { found: false, prompt: "" });
+});
