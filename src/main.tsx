@@ -1071,6 +1071,8 @@ function Detail({
   const [generationPrompt, setGenerationPrompt] = useState("");
   const [promptLoading, setPromptLoading] = useState(true);
   const [promptLoadError, setPromptLoadError] = useState("");
+  const [promptRepairRequired, setPromptRepairRequired] = useState(false);
+  const [promptReload, setPromptReload] = useState(0);
   const [dirty, setDirty] = useState(false);
   const valuesRef = useRef(values);
   const dirtyRef = useRef(false);
@@ -1083,7 +1085,8 @@ function Detail({
   const sheetImages = rawSheetImages.map(displayImageUrl);
   const images = (renderedImages.length ? renderedImages : embeddedImages.length ? embeddedImages : sheetImages) as string[];
   const fallbackImage = (index: number) => directImageFallback(rawSheetImages[index]);
-  const sendComplete = ["Sent to Sheets", "Generated", "Approved", "Posted"].includes(story.status);
+  const workflowPastGeneration = ["Generated", "Approved", "Posted"].includes(story.status);
+  const sendComplete = workflowPastGeneration || (story.status === "Sent to Sheets" && Boolean(generationPrompt) && !promptRepairRequired);
   const generationComplete = ["Generated", "Approved", "Posted"].includes(story.status) || images.length > 0;
   const postHandoffComplete = Boolean(story.postHandoffAt) || story.status === "Posted";
   const lockedAfterSheetSend = sendComplete;
@@ -1107,6 +1110,7 @@ function Detail({
     let cancelled = false;
     setGenerationPrompt("");
     setPromptLoadError("");
+    setPromptRepairRequired(false);
     setPromptLoading(true);
     void (async () => {
       try {
@@ -1119,7 +1123,12 @@ function Detail({
           body: JSON.stringify({ articleId: story.id }),
         });
         const result = await response.json();
-        if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
+        if (!response.ok) {
+          if (result.code === "SHEET_ROW_MISSING" || result.code === "GENERATION_PROMPT_MISSING") {
+            setPromptRepairRequired(true);
+          }
+          throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
+        }
         if (!cancelled) setGenerationPrompt(String(result.prompt ?? ""));
       } catch (error) {
         if (!cancelled) setPromptLoadError(error instanceof Error ? error.message : "Couldn’t retrieve the generation prompt.");
@@ -1128,7 +1137,7 @@ function Detail({
       }
     })();
     return () => { cancelled = true; };
-  }, [story.id, story.status]);
+  }, [story.id, story.status, promptReload]);
   const update = (key: keyof DetailValues, value: string | number) => {
     dirtyRef.current = true;
     setDirty(true);
@@ -1172,7 +1181,19 @@ function Detail({
     }
   };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
-  const send = async () => { setBusy("sheet"); try { const result = await sendForGeneration(story.id, values) as { warnings?: string[] }; notify(result.warnings?.length ? `Article saved. ${result.warnings.join(" ")}` : "Article sent to the Google Sheet for generation.", result.warnings?.length ? "error" : "success"); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet.", "error"); } finally { setBusy(""); } };
+  const send = async () => {
+    setBusy("sheet");
+    try {
+      const result = await sendForGeneration(story.id, values) as { warnings?: string[] };
+      setPromptRepairRequired(false);
+      setPromptReload((value) => value + 1);
+      notify(result.warnings?.length ? `Article saved. ${result.warnings.join(" ")}` : "Article row and generation prompt verified in Google Sheets.", result.warnings?.length ? "error" : "success");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Couldn’t send this article to the generation sheet.", "error");
+    } finally {
+      setBusy("");
+    }
+  };
   const generateContent = async () => {
     setBusy("generate");
     let chatWindow: Window | null = null;
@@ -1320,8 +1341,8 @@ function Detail({
           <div className="generated-post-copy"><b>Post Comment</b><p>{values.caption || "No post comment provided."}</p><b>Hashtags</b><p>{values.hashtags || "No hashtags provided."}</p></div>
         </div> : <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} onBlur={saveOnBlur} /></Field>}
         <div className="generation-step-actions">
-          <button className={sendComplete ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || sendComplete}><FiExternalLink /> {sendComplete ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
-          <button className={generationComplete ? "button complete wide" : "button wide"} onClick={() => void generateContent()} disabled={Boolean(busy) || promptLoading || generationComplete || story.status !== "Sent to Sheets"}><FiCopy /> {generationComplete ? "Generate Content Complete" : promptLoading ? "Loading Column J…" : busy === "generate" ? "Copying…" : "Generate Content"}</button>
+          <button className={sendComplete ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || promptLoading || sendComplete}><FiExternalLink /> {sendComplete ? "Sent to Sheets Complete" : busy === "sheet" ? "Repairing…" : promptRepairRequired ? "Repair Sheet Row" : "Send for Generation"}</button>
+          <button className={generationComplete ? "button complete wide" : "button wide"} onClick={() => void generateContent()} disabled={Boolean(busy) || promptLoading || promptRepairRequired || !generationPrompt || generationComplete || story.status !== "Sent to Sheets"}><FiCopy /> {generationComplete ? "Generate Content Complete" : promptLoading ? "Verifying Column J…" : promptRepairRequired ? "Repair Sheet Row First" : busy === "generate" ? "Copying…" : "Generate Content"}</button>
           <button className={postHandoffComplete ? "button complete wide" : "button primary wide"} onClick={() => void generatePost()} disabled={Boolean(busy) || !generationComplete || postHandoffComplete}><FiExternalLink /> {postHandoffComplete ? "Generate Post Complete" : busy === "post" ? "Opening Instagram…" : "Generate Post"}</button>
         </div>
       </section>
