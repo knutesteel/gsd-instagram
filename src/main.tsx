@@ -364,7 +364,7 @@ function App() {
       void syncGeneratedContent().catch((error) => notify(error instanceof Error ? error.message : "Automatic sheet synchronization failed.", "error"));
     };
     const initialRefresh = window.setTimeout(refreshFromSheet, 750);
-    const refreshInterval = window.setInterval(refreshFromSheet, 60_000);
+    const refreshInterval = window.setInterval(refreshFromSheet, 10_000);
     window.addEventListener("focus", refreshFromSheet);
     return () => {
       disposed = true;
