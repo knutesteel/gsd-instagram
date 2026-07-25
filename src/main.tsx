@@ -41,6 +41,7 @@ type Story = {
   overview: string;
   category: string;
   source: string;
+  postHandoffAt: string | null;
   score: number;
   url?: string;
   type: string;
@@ -97,6 +98,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     overview: postConcept?.summary ?? "",
     category: row.category ?? "Uncategorized",
     source: row.source ?? "",
+    postHandoffAt: row.post_handoff_at ?? null,
     score: row.rank ?? 0,
     type: postConcept?.post_type ?? "carousel",
     featuredImage: featuredImageOverride || embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
@@ -138,7 +140,7 @@ function App() {
     if (!supabase) return [] as Story[];
     const { data, error } = await supabase
       .from("articles")
-      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
+      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,post_handoff_at,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
       .order("created_at", { ascending: false });
     if (error) throw new Error(`Couldn’t load your queue: ${error.message}`);
     const conceptIds = (data ?? []).map((row: any) => conceptFromArticle(row)?.id).filter(Boolean);
@@ -333,6 +335,13 @@ function App() {
       syncingGeneratedContent.current = false;
     }
   };
+  const markPostHandoff = async (articleId: string) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const postHandoffAt = new Date().toISOString();
+    const { error } = await supabase.from("articles").update({ post_handoff_at: postHandoffAt }).eq("id", articleId);
+    if (error) throw new Error(`Couldn’t record the Instagram handoff: ${error.message}`);
+    setItems((old) => old.map((item) => item.id === articleId ? { ...item, postHandoffAt } : item));
+  };
   const approveGeneratedContent = async (articleId: string) => {
     if (!supabase) return;
     const { data } = await supabase.auth.getSession(); if (!data.session) throw new Error("Please sign in again.");
@@ -468,6 +477,7 @@ function App() {
             sendForGeneration={sendForGeneration}
             syncGeneratedContent={syncGeneratedContent}
             approveGeneratedContent={approveGeneratedContent}
+            markPostHandoff={markPostHandoff}
           />
         )}
         {screen === "archive" && (
@@ -705,7 +715,7 @@ function Dashboard({
               </div>
               {item.generationIdentifier ? (item.generationSheetRow ? <a className="identifier-link" href={`https://docs.google.com/spreadsheets/d/1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ/edit#gid=0&range=D${item.generationSheetRow}`} target="_blank" rel="noreferrer">{item.generationIdentifier}</a> : <span>{item.generationIdentifier}</span>) : <span className="identifier-empty">—</span>}
               <time className="date-added" dateTime={item.createdAt ?? undefined}>{formatAddedDate(item.createdAt)}</time>
-              <div><span className="chip">{item.category}</span>{item.source && <small className="story-source">{item.source}</small>}</div>
+              <div><span className="chip">{item.category}</span>{item.source && <small className="story-source">{item.source}</small>}{item.postHandoffAt && item.status !== "Posted" && <span className="posted-question-pill">Posted?</span>}</div>
               <span className="score">{item.score}</span>
               <span className="type">{item.type}</span>
               <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select>
@@ -753,7 +763,7 @@ function ArticleList({
       {groups.map(([status, stories]) => <section className="article-status-group" key={status}>
         <header><h2>{status}</h2><span>{stories.length} {stories.length === 1 ? "article" : "articles"}</span></header>
         <div className="article-list-grid">{stories.map((item) => <article className="article-list-card" key={item.id}>
-          <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}{item.generationIdentifier ? ` (${item.generationIdentifier})` : ""}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span>{item.source && <span className="status-pill source-pill">{item.source}</span>}</div>
+          <div className="article-list-copy"><button className="article-list-title" onClick={() => select(item.id)}>{item.title}{item.generationIdentifier ? ` (${item.generationIdentifier})` : ""}</button><p>{item.overview}</p><span className="status-pill">{item.status}</span>{item.source && <span className="status-pill source-pill">{item.source}</span>}{item.postHandoffAt && item.status !== "Posted" && <span className="status-pill posted-question-pill">Posted?</span>}</div>
           <ArticleThumbnail item={item} />
         </article>)}</div>
       </section>)}
@@ -1016,6 +1026,7 @@ function Detail({
   sendForGeneration,
   syncGeneratedContent,
   approveGeneratedContent,
+  markPostHandoff,
   notify,
 }: {
   story: Story;
@@ -1028,6 +1039,7 @@ function Detail({
   sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
   syncGeneratedContent: () => Promise<void>;
   approveGeneratedContent: (articleId: string) => Promise<void>;
+  markPostHandoff: (articleId: string) => Promise<void>;
   notify: Notify;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
@@ -1044,7 +1056,10 @@ function Detail({
   const sheetImages = rawSheetImages.map(displayImageUrl);
   const images = (renderedImages.length ? renderedImages : embeddedImages.length ? embeddedImages : sheetImages) as string[];
   const fallbackImage = (index: number) => directImageFallback(rawSheetImages[index]);
-  const lockedAfterSheetSend = ["Sent to Sheets", "Generated", "Approved", "Posted"].includes(story.status);
+  const sendComplete = ["Sent to Sheets", "Generated", "Approved", "Posted"].includes(story.status);
+  const generationComplete = ["Generated", "Approved", "Posted"].includes(story.status) || images.length > 0;
+  const postHandoffComplete = Boolean(story.postHandoffAt) || story.status === "Posted";
+  const lockedAfterSheetSend = sendComplete;
   const isTextOverview = concept?.image_summary?.origin === "text_overview";
   useEffect(() => setValues(detailValues(story, concept)), [story.id, concept]);
   useEffect(() => setActiveImage(0), [story.id, images.length]);
@@ -1120,6 +1135,47 @@ function Detail({
       setBusy("");
     }
   };
+  const generatePost = async () => {
+    setBusy("post");
+    let instagramWindow: Window | null = null;
+    try {
+      const caption = values.caption.trim();
+      if (!caption) throw new Error("Caption is empty for this article.");
+      if (!generationComplete) throw new Error("Generate the post content before opening Instagram.");
+
+      let copied = false;
+      let clipboardWrite: Promise<void> | null = null;
+      if (navigator.clipboard?.writeText && document.hasFocus()) {
+        clipboardWrite = navigator.clipboard.writeText(caption);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = caption;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        copied = document.execCommand("copy");
+        textarea.remove();
+      }
+
+      instagramWindow = window.open("about:blank", "_blank");
+      if (!instagramWindow) throw new Error("Your browser blocked the new Instagram window. Allow popups for this site and try again.");
+      instagramWindow.opener = null;
+      if (clipboardWrite) copied = await clipboardWrite.then(() => true, () => false);
+      if (!copied) throw new Error("The browser blocked clipboard access. Keep this page active and click Generate Post again.");
+
+      instagramWindow.location.href = "https://www.instagram.com/create/select/";
+      await markPostHandoff(story.id);
+      notify("Caption copied and Instagram post creation opened.");
+    } catch (error) {
+      if (instagramWindow && !instagramWindow.closed && instagramWindow.location.href === "about:blank") instagramWindow.close();
+      notify(error instanceof Error ? error.message : "Couldn’t open Instagram post creation.", "error");
+    } finally {
+      setBusy("");
+    }
+  };
   const refresh = async () => { setBusy("refresh"); try { await syncGeneratedContent(); notify("Content refreshed from the Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t refresh generated content.", "error"); } finally { setBusy(""); } };
   const approve = async () => { setBusy("approve"); try { await approveGeneratedContent(story.id); notify("Post approved in the app and Google Sheet."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t approve this post.", "error"); } finally { setBusy(""); } };
   return (
@@ -1181,11 +1237,12 @@ function Detail({
             }} /></button>)}</div>}
           </div>
           <div className="generated-post-copy"><b>Post Comment</b><p>{values.caption || "No post comment provided."}</p><b>Hashtags</b><p>{values.hashtags || "No hashtags provided."}</p></div>
-        </div> : <>
-          <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>
-          <button className={story.status === "Sent to Sheets" ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || story.status === "Sent to Sheets"}><FiExternalLink /> {story.status === "Sent to Sheets" ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
-          <button className="button wide" onClick={() => void generateContent()} disabled={Boolean(busy) || promptLoading}><FiCopy /> {promptLoading ? "Loading Column J…" : busy === "generate" ? "Copying…" : "Generate Content"}</button>
-        </>}
+        </div> : <Field label="Content (Suggested Prompt)"><textarea className="tall" style={{ minHeight: 720, lineHeight: 1.7 }} value={values.content} onChange={(e) => update("content", e.target.value)} /></Field>}
+        <div className="generation-step-actions">
+          <button className={sendComplete ? "button complete wide" : "button primary wide"} onClick={() => void send()} disabled={Boolean(busy) || sendComplete}><FiExternalLink /> {sendComplete ? "Sent to Sheets Complete" : busy === "sheet" ? "Sending…" : "Send for Generation"}</button>
+          <button className={generationComplete ? "button complete wide" : "button wide"} onClick={() => void generateContent()} disabled={Boolean(busy) || promptLoading || generationComplete || story.status !== "Sent to Sheets"}><FiCopy /> {generationComplete ? "Generate Content Complete" : promptLoading ? "Loading Column J…" : busy === "generate" ? "Copying…" : "Generate Content"}</button>
+          <button className={postHandoffComplete ? "button complete wide" : "button primary wide"} onClick={() => void generatePost()} disabled={Boolean(busy) || !generationComplete || postHandoffComplete}><FiExternalLink /> {postHandoffComplete ? "Generate Post Complete" : busy === "post" ? "Opening Instagram…" : "Generate Post"}</button>
+        </div>
       </section>
     </section>
   );
