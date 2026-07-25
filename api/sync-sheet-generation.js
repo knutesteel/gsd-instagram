@@ -23,6 +23,7 @@ const normalizeSheetStatus = (value) => {
   return null;
 };
 const appStatusLabel = (value) => ({ sent_to_sheets: "Sent to Sheets", generated: "Generated", approved_to_post: "Approved", posted: "Posted", new: "New", discarded: "Archived" }[value] || String(value || "Unknown"));
+export const currentSheetRowNumber = (rows, row) => rows.indexOf(row) + 1;
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -141,7 +142,8 @@ export default async function handler(req, res) {
     // later row from receiving its authoritative sheet status.
     for (const row of syncedRows) {
       const identifier = String(row[3]).trim();
-      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,source_url,canonical_url,source,generation_identifier,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
+      const rowNumber = currentSheetRowNumber(rows, row);
+      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,source_url,canonical_url,source,generation_identifier,generation_sheet_row,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
       if (!articleResponse.ok) continue;
       const article = (await articleResponse.json())[0];
       const concept = article?.post_concepts?.[0];
@@ -162,6 +164,14 @@ export default async function handler(req, res) {
         if (!articleUpdate.ok) throw new Error(`Couldn’t reconcile identifier #${identifier} with the Google Sheet.`);
         updatedArticleIds.push(article.id);
         statuses[article.id] = normalizedStatus.label;
+      }
+      if (Number(article.generation_sheet_row || 0) !== rowNumber) {
+        const rowPointerUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify({ generation_sheet_row: rowNumber }),
+        });
+        if (!rowPointerUpdate.ok) throw new Error(`Couldn’t refresh the sheet row for identifier #${identifier}.`);
       }
 
       // Reconcile every field shared by the spreadsheet and app before image
