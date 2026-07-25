@@ -58,3 +58,19 @@ export const sharedSheetValuesFromApp = ({ article, concept }) => ({
   ],
   source: String(article.source || ""),
 });
+
+export const sharedSheetRowMatches = (row, identifier, shared) => {
+  const expected = [
+    shared.firstRange[0],
+    String(identifier || ""),
+    ...shared.firstRange.slice(1),
+    shared.secondRange[0],
+    shared.secondRange[1],
+    shared.source,
+  ].map((value) => String(value ?? ""));
+  const actual = [
+    row[2], row[3], row[4], row[5], row[6], row[7], row[8],
+    row[10], row[11], row[17],
+  ].map((value) => String(value ?? ""));
+  return JSON.stringify(actual) === JSON.stringify(expected);
+};
