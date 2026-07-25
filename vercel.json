@@ -3,5 +3,6 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "crons": [{ "path": "/api/instagram-cron", "schedule": "17 10 * * *" }],
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

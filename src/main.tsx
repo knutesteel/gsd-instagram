@@ -4,6 +4,7 @@ import {
   FiArchive,
   FiArrowLeft,
   FiArrowRight,
+  FiBarChart2,
   FiCheck,
   FiChevronDown,
   FiClock,
@@ -31,6 +32,7 @@ type Screen =
   | "articles"
   | "discover"
   | "detail"
+  | "insights"
   | "archive";
 type Toast = { message: string; kind: "success" | "error" };
 type StatusMismatch = { identifier: string; appStatus: string; sheetStatus: string };
@@ -413,6 +415,7 @@ function App() {
               { key: "dashboard", icon: <FiGrid />, label: "Dashboard" },
               { key: "discover", icon: <FiCompass />, label: "Discover" },
               { key: "articles", icon: <FiFileText />, label: "Generation Details" },
+              { key: "insights", icon: <FiBarChart2 />, label: "Instagram Insights" },
               { key: "archive", icon: <FiArchive />, label: "Archive" },
             ] as const
           ).map((n) => (
@@ -497,6 +500,7 @@ function App() {
             toggleFavorite={(isFavorite) => toggleFavorite(active.id, isFavorite)}
           />
         )}
+        {screen === "insights" && <InstagramInsights notify={notify} />}
         {screen === "archive" && (
           <Archive
             items={items.filter((i) => i.status === "Archived")}
@@ -508,6 +512,175 @@ function App() {
       </main>
     </div>
   );
+}
+
+type InstagramConnection = {
+  instagram_username: string | null;
+  facebook_page_name: string | null;
+  last_synced_at: string | null;
+  token_expires_at: string | null;
+};
+
+type InstagramPost = {
+  id: string;
+  article_id: string | null;
+  caption: string;
+  media_type: string | null;
+  media_product_type: string | null;
+  media_url: string | null;
+  thumbnail_url: string | null;
+  permalink: string | null;
+  posted_at: string | null;
+  views: number;
+  reach: number;
+  like_count: number;
+  comments_count: number;
+  saved: number;
+  shares: number;
+  total_interactions: number;
+  engagement_rate: number;
+};
+
+function InstagramInsights({ notify }: { notify: Notify }) {
+  const [connection, setConnection] = useState<InstagramConnection | null>(null);
+  const [posts, setPosts] = useState<InstagramPost[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+
+  const load = async () => {
+    if (!supabase) return;
+    setLoading(true);
+    const [connectionResult, postsResult] = await Promise.all([
+      supabase.from("instagram_connections").select("instagram_username,facebook_page_name,last_synced_at,token_expires_at").maybeSingle(),
+      supabase.from("instagram_media").select("id,article_id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,published_at,like_count,comments_count,instagram_media_insights(captured_on,views,reach,saved,shares,total_interactions,raw_metrics)").order("published_at", { ascending: false }).limit(500),
+    ]);
+    if (connectionResult.error) {
+      if (!/does not exist|schema cache/i.test(connectionResult.error.message)) throw connectionResult.error;
+    } else {
+      setConnection(connectionResult.data);
+    }
+    if (!postsResult.error) setPosts((postsResult.data ?? []).map((row: any) => {
+      const latest = [...(row.instagram_media_insights ?? [])].sort((a, b) => String(b.captured_on).localeCompare(String(a.captured_on)))[0] ?? {};
+      const raw = latest.raw_metrics ?? {};
+      const reach = Number(latest.reach || 0);
+      const interactions = Number(latest.total_interactions || (Number(row.like_count || 0) + Number(row.comments_count || 0) + Number(latest.saved || 0) + Number(latest.shares || 0)));
+      return {
+        ...row,
+        posted_at: row.published_at,
+        views: Number(latest.views || 0),
+        reach,
+        saved: Number(latest.saved || 0),
+        shares: Number(latest.shares || 0),
+        total_interactions: interactions,
+        engagement_rate: Number(raw.engagement_rate ?? (reach ? (interactions / reach) * 100 : 0)),
+      };
+    }) as InstagramPost[]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("instagram") === "connected") {
+      notify("Instagram connected successfully.");
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.get("instagram") === "error") {
+      notify(params.get("message") || "Instagram authorization failed.", "error");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    void load().catch((error) => {
+      setLoading(false);
+      notify(error instanceof Error ? error.message : "Couldn’t load Instagram insights.", "error");
+    });
+  }, []);
+
+  const connect = async () => {
+    if (!supabase) return;
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/instagram-connect", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${data.session.access_token}` },
+    });
+    const result = await response.json();
+    if (!response.ok || !result.authorizationUrl) throw new Error(result.error || "Couldn’t start Instagram authorization.");
+    window.location.assign(result.authorizationUrl);
+  };
+
+  const sync = async () => {
+    if (!supabase) return;
+    setSyncing(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("Please sign in again.");
+      const response = await fetch("/api/instagram-sync", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${data.session.access_token}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Instagram refresh failed.");
+      await load();
+      notify(`Instagram refreshed: ${result.imported} posts, ${result.matched} matched to app records.`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const sum = (field: keyof Pick<InstagramPost, "views" | "reach" | "total_interactions" | "saved" | "shares">) =>
+    posts.reduce((total, post) => total + Number(post[field] || 0), 0);
+  const totalReach = sum("reach");
+  const totalInteractions = sum("total_interactions") || posts.reduce((total, post) =>
+    total + Number(post.like_count || 0) + Number(post.comments_count || 0) + Number(post.saved || 0) + Number(post.shares || 0), 0);
+  const overallEngagement = totalReach ? ((totalInteractions / totalReach) * 100).toFixed(2) : "0.00";
+
+  return <section>
+    <header className="page-header">
+      <div>
+        <h1>Instagram Insights</h1>
+        <p>Post views, reach, engagement, and performance for your connected business account.</p>
+      </div>
+      <div className="page-actions">
+        {connection
+          ? <button className="button primary" disabled={syncing} onClick={() => void sync().catch((error) => notify(error instanceof Error ? error.message : "Instagram refresh failed.", "error"))}><FiRefreshCw className={syncing ? "spin" : ""} /> {syncing ? "Refreshing…" : "Refresh insights"}</button>
+          : <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>}
+      </div>
+    </header>
+    {loading ? <div className="panel">Loading Instagram insights…</div> : !connection ? <div className="panel instagram-connect-card">
+      <FiBarChart2 />
+      <h2>Connect @hankandthesquirrel</h2>
+      <p>Authorize the Facebook Page connected to your Instagram Business account. Meta credentials remain server-side.</p>
+      <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>
+    </div> : <>
+      <div className="instagram-account-bar">
+        <div><b>@{connection.instagram_username || "Instagram account"}</b><span>{connection.facebook_page_name || "Connected Facebook Page"}</span></div>
+        <span>{connection.last_synced_at ? `Last refreshed ${new Date(connection.last_synced_at).toLocaleString()}` : "Ready for first refresh"}</span>
+      </div>
+      <div className="insights-metrics">
+        <InsightMetric label="Posts collected" value={posts.length.toLocaleString()} />
+        <InsightMetric label="Views" value={sum("views").toLocaleString()} />
+        <InsightMetric label="Reach" value={totalReach.toLocaleString()} />
+        <InsightMetric label="Interactions" value={totalInteractions.toLocaleString()} />
+        <InsightMetric label="Engagement rate" value={`${overallEngagement}%`} />
+      </div>
+      <div className="instagram-post-table">
+        <div className="instagram-post-head"><span>Post</span><span>Views</span><span>Reach</span><span>Likes</span><span>Comments</span><span>Saves</span><span>Shares</span><span>Engagement</span></div>
+        {!posts.length && <div className="empty-queue"><FiBarChart2 /><h2>No posts collected yet</h2><p>Select Refresh insights to import your recent Instagram posts.</p></div>}
+        {posts.map((post) => <div className="instagram-post-row" key={post.id}>
+          <div className="instagram-post-summary">
+            {post.thumbnail_url || post.media_url ? <img src={post.thumbnail_url || post.media_url || ""} alt="" /> : <span className="instagram-post-placeholder"><FiBarChart2 /></span>}
+            <div>
+              {post.permalink ? <a href={post.permalink} target="_blank" rel="noreferrer">{post.caption.slice(0, 100) || "Instagram post"} <FiExternalLink /></a> : <b>{post.caption.slice(0, 100) || "Instagram post"}</b>}
+              <small>{post.posted_at ? new Date(post.posted_at).toLocaleDateString() : "Date unavailable"} · {post.media_product_type || post.media_type || "Post"}{post.article_id ? " · Matched" : ""}</small>
+            </div>
+          </div>
+          <span>{Number(post.views || 0).toLocaleString()}</span><span>{Number(post.reach || 0).toLocaleString()}</span><span>{Number(post.like_count || 0).toLocaleString()}</span><span>{Number(post.comments_count || 0).toLocaleString()}</span><span>{Number(post.saved || 0).toLocaleString()}</span><span>{Number(post.shares || 0).toLocaleString()}</span><span>{Number(post.engagement_rate || 0).toFixed(2)}%</span>
+        </div>)}
+      </div>
+    </>}
+  </section>;
+}
+
+function InsightMetric({ label, value }: { label: string; value: string }) {
+  return <div className="insight-metric"><strong>{value}</strong><span>{label}</span></div>;
 }
 
 function AuthGate() {
