@@ -1073,7 +1073,7 @@ function Detail({
       }
     })();
     return () => { cancelled = true; };
-  }, [story.id]);
+  }, [story.id, story.status]);
   const update = (key: keyof DetailValues, value: string | number) => setValues((old) => ({ ...old, [key]: value }));
   const save = async () => { setBusy("save"); try { await saveDetail(story.id, values); notify("Article detail saved."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error"); } finally { setBusy(""); } };
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
@@ -1082,36 +1082,19 @@ function Detail({
     setBusy("generate");
     let chatWindow: Window | null = null;
     try {
-      // Reserve the tab synchronously while the button click still has user
-      // activation. Clipboard APIs may resolve after the popup allowance ends.
-      chatWindow = window.open("about:blank", "_blank");
-      if (!chatWindow) throw new Error("Your browser blocked the new ChatGPT window. Allow popups for this site and try again.");
-      chatWindow.opener = null;
-      if (!supabase) throw new Error("Supabase is not configured.");
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) throw new Error("Please sign in again.");
-      const response = await fetch("/api/generation-prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-        body: JSON.stringify({ articleId: story.id }),
-      });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error ?? "Couldn’t retrieve the generation prompt.");
-      const freshPrompt = String(result.prompt ?? "");
-      if (!freshPrompt) throw new Error("Column J is empty for this article.");
+      if (promptLoading) throw new Error("Column J is still loading. Please try again in a moment.");
+      if (!generationPrompt) throw new Error(promptLoadError || "Column J is empty for this article.");
 
+      // Both permission-sensitive operations must begin directly inside the
+      // click. Awaiting a session or network request first causes Chrome to
+      // consume the page's user activation and block clipboard access.
       let copied = false;
+      let clipboardWrite: Promise<void> | null = null;
       if (navigator.clipboard?.writeText && document.hasFocus()) {
-        try {
-          await navigator.clipboard.writeText(freshPrompt);
-          copied = true;
-        } catch {
-          // Fall through to the synchronous fallback when supported.
-        }
-      }
-      if (!copied) {
+        clipboardWrite = navigator.clipboard.writeText(generationPrompt);
+      } else {
         const textarea = document.createElement("textarea");
-        textarea.value = freshPrompt;
+        textarea.value = generationPrompt;
         textarea.setAttribute("readonly", "");
         textarea.style.position = "fixed";
         textarea.style.opacity = "0";
@@ -1121,6 +1104,11 @@ function Detail({
         copied = document.execCommand("copy");
         textarea.remove();
       }
+
+      chatWindow = window.open("about:blank", "_blank");
+      if (!chatWindow) throw new Error("Your browser blocked the new ChatGPT window. Allow popups for this site and try again.");
+      chatWindow.opener = null;
+      if (clipboardWrite) copied = await clipboardWrite.then(() => true, () => false);
       if (!copied) throw new Error("The browser blocked clipboard access. Keep this page active and click Generate Content again.");
 
       chatWindow.location.href = "https://chatgpt.com/g/g-p-69e8effb73588191acaccbaed49a9d96/c/6a5fd350-e1f8-83ea-a391-a1e3cd4b4dcb";

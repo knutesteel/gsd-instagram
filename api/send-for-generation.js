@@ -116,7 +116,42 @@ async function readGenerationPromptFormula(accessToken, row) {
   return (await response.json())?.sheets?.[0]?.data?.[0]?.rowData?.[0]?.values?.[0]?.userEnteredValue?.formulaValue || "";
 }
 
+export function numericIdentifiersForSort(rows) {
+  return rows.map((row) => {
+    const value = Number(numericIdentifier(row?.[0]));
+    return [Number.isInteger(value) && value > 0 ? value : row?.[0] ?? ""];
+  });
+}
+
 async function formatAndSortSheet(accessToken) {
+  // Rows historically stored Identifier as text. Google Sheets sorts textual
+  // numbers lexicographically (for example, 6 before 29), so normalize every
+  // populated Identifier cell to a real number before applying the sort.
+  const identifiersResponse = await googleFetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!D2:D")}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+    "Identifier sort preparation",
+  );
+  if (!identifiersResponse.ok) throw new Error(await googleError(identifiersResponse, "Couldn’t read identifiers before sorting"));
+  const identifierRows = (await identifiersResponse.json()).values ?? [];
+  if (identifierRows.length) {
+    const normalizedIdentifiers = numericIdentifiersForSort(identifierRows);
+    const normalizeResponse = await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(`Sheet1!D2:D${identifierRows.length + 1}`)}?valueInputOption=RAW`,
+      {
+        method: "PUT",
+        headers: { ...json, Authorization: `Bearer ${accessToken}` },
+        body: JSON.stringify({
+          range: `Sheet1!D2:D${identifierRows.length + 1}`,
+          majorDimension: "ROWS",
+          values: normalizedIdentifiers,
+        }),
+      },
+      "Identifier numeric normalization",
+    );
+    if (!normalizeResponse.ok) throw new Error(await googleError(normalizeResponse, "Couldn’t normalize identifiers before sorting"));
+  }
+
   const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
     method: "POST",
     headers: { ...json, Authorization: `Bearer ${accessToken}` },
@@ -186,7 +221,7 @@ export default async function handler(req, res) {
       new Date().toISOString().slice(0, 10),
       "Pending",
       article.title,
-      identifier,
+      Number(identifier),
       url,
       concept.summary,
       concept.panel_count || 1,
@@ -222,7 +257,7 @@ export default async function handler(req, res) {
 
     const warnings = [];
     stage = "format-sort";
-    try { await formatAndSortSheet(accessToken); } catch (error) { warnings.push(error instanceof Error ? error.message : "The row was saved, but sheet formatting failed."); }
+    await formatAndSortSheet(accessToken);
     stage = "relocate-row";
     const sortedRow = await sheetRowForIdentifier(accessToken, identifier);
     if (!sortedRow) throw new Error("The verified row could not be located by identifier after sorting.");
