@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { currentSheetRowNumber, isNumericIdentifier, uniqueNumericSheetRows } from "./sync-sheet-generation.js";
+import {
+  LEGACY_SYNC_ERROR_CUTOFF,
+  currentSheetRowNumber,
+  isNumericIdentifier,
+  shouldReportSyncIssue,
+  uniqueNumericSheetRows,
+} from "./sync-sheet-generation.js";
 
 test("derives the current sheet row after sorting instead of trusting a cached pointer", () => {
   const rows = [
@@ -27,4 +33,14 @@ test("blocks duplicate numeric identifiers instead of synchronizing either row",
   const result = uniqueNumericSheetRows([header, first, duplicate, valid]);
   assert.deepEqual(result.rows, [valid]);
   assert.deepEqual(result.duplicateIdentifiers, ["1"]);
+});
+
+test("suppresses historical sync issues without hiding today or unknown records", () => {
+  assert.equal(LEGACY_SYNC_ERROR_CUTOFF, "2026-07-25T04:00:00.000Z");
+  assert.equal(shouldReportSyncIssue("2026-07-24T23:59:59.999Z"), false);
+  assert.equal(shouldReportSyncIssue("2026-07-25T03:59:59.999Z"), false);
+  assert.equal(shouldReportSyncIssue("2026-07-25T04:00:00.000Z"), true);
+  assert.equal(shouldReportSyncIssue("2026-07-25T12:00:00.000Z"), true);
+  assert.equal(shouldReportSyncIssue(null), true);
+  assert.equal(shouldReportSyncIssue("not-a-date"), true);
 });
