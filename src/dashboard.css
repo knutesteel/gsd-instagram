@@ -451,3 +451,38 @@
   font-weight: 800;
   letter-spacing: .02em;
 }
+
+
+.favorite-star {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-right: 8px;
+  padding: 0;
+  border: 1px solid #d8d1c5;
+  border-radius: 50%;
+  background: #fffdf9;
+  color: #8a8479;
+  vertical-align: middle;
+}
+.favorite-star:hover {
+  border-color: #d5a525;
+  color: #b98900;
+}
+.favorite-star.active {
+  border-color: #d5a525;
+  background: #fff4c2;
+  color: #c18c00;
+}
+.favorite-star.active svg {
+  fill: currentColor;
+}
+.detail-favorite {
+  display: inline-flex;
+  width: auto;
+  min-width: 120px;
+  padding: 0 12px;
+  border-radius: 9px;
+  gap: 7px;
+}
