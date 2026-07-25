@@ -14,3 +14,10 @@ test("previous and next navigation wait for a verified save", () => {
   assert.match(source, /navigateAfterSave\(next\)/);
   assert.match(source, /if \(dirtyRef\.current\) await save\(true\)/);
 });
+
+test("a missing sheet row re-enables repair and blocks generation", () => {
+  assert.match(source, /result\.code === "SHEET_ROW_MISSING"/);
+  assert.match(source, /promptRepairRequired \? "Repair Sheet Row"/);
+  assert.match(source, /promptRepairRequired \? "Repair Sheet Row First"/);
+  assert.match(source, /setPromptReload\(\(value\) => value \+ 1\)/);
+});
