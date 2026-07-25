@@ -3,6 +3,16 @@ import { extendSheetFilter } from "./sheet-filter.js";
 import { sharedFieldsFromSheetRow } from "./sheet-sync-fields.js";
 
 const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
+// Grandfather records created before July 25, 2026 in the user's Eastern
+// timezone. Keep synchronizing them, but do not surface their historical
+// mismatches as current workflow errors.
+export const LEGACY_SYNC_ERROR_CUTOFF = "2026-07-25T04:00:00.000Z";
+export function shouldReportSyncIssue(createdAt, cutoff = LEGACY_SYNC_ERROR_CUTOFF) {
+  if (!createdAt) return true;
+  const createdTime = Date.parse(createdAt);
+  const cutoffTime = Date.parse(cutoff);
+  return !Number.isFinite(createdTime) || !Number.isFinite(cutoffTime) || createdTime >= cutoffTime;
+}
 const base64Url = (value) => Buffer.from(value).toString("base64url");
 const driveFileId = (url) => String(url || "").match(/[?&]id=([A-Za-z0-9_-]+)/)?.[1] || String(url || "").match(/\/file\/d\/([A-Za-z0-9_-]+)/)?.[1] || String(url || "").match(/\/d\/([A-Za-z0-9_-]+)(?:[=/?]|$)/)?.[1];
 const driveImageUrl = (url) => {
@@ -155,10 +165,19 @@ export default async function handler(req, res) {
     const statusMismatches = [];
     const imagesByArticleId = {};
     const enrichmentQueue = [];
-    const syncErrors = canonicalRows.duplicateIdentifiers.map((identifier) => ({
-      identifier,
-      error: `Duplicate spreadsheet rows use identifier #${identifier}. Neither row was synchronized.`,
-    }));
+    const articleDatesResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&select=generation_identifier,created_at`, { headers });
+    if (!articleDatesResponse.ok) throw new Error("Couldn’t load article dates for synchronization.");
+    const articleCreatedAtByIdentifier = new Map(
+      (await articleDatesResponse.json())
+        .filter((article) => isNumericIdentifier(article.generation_identifier))
+        .map((article) => [String(article.generation_identifier).trim(), article.created_at]),
+    );
+    const syncErrors = canonicalRows.duplicateIdentifiers
+      .filter((identifier) => shouldReportSyncIssue(articleCreatedAtByIdentifier.get(identifier)))
+      .map((identifier) => ({
+        identifier,
+        error: `Duplicate spreadsheet rows use identifier #${identifier}. Neither row was synchronized.`,
+      }));
 
     // Pass 1: reconcile every identifier's status before doing any image
     // downloads. Image work can be slow or fail, but it must never prevent a
@@ -167,7 +186,7 @@ export default async function handler(req, res) {
       const identifier = String(row[3]).trim();
       const rowNumber = currentSheetRowNumber(rows, row);
       try {
-      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,source_url,canonical_url,source,generation_identifier,generation_sheet_row,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
+      const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,created_at,source_url,canonical_url,source,generation_identifier,generation_sheet_row,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
       if (!articleResponse.ok) throw new Error("Couldn’t load the matching app record.");
       const article = (await articleResponse.json())[0];
       const concept = article?.post_concepts?.[0];
@@ -176,7 +195,7 @@ export default async function handler(req, res) {
       const normalizedStatus = normalizeSheetStatus(row[1]);
       if (!normalizedStatus) continue;
       const sheetStatus = normalizedStatus.database;
-      if (article.status !== sheetStatus) {
+      if (article.status !== sheetStatus && shouldReportSyncIssue(article.created_at)) {
         statusMismatches.push({ identifier, appStatus: appStatusLabel(article.status), sheetStatus: normalizedStatus.label });
       }
       if (article.status !== sheetStatus) {
@@ -259,10 +278,12 @@ export default async function handler(req, res) {
         images,
       });
       } catch (error) {
-        syncErrors.push({
-          identifier,
-          error: error instanceof Error ? error.message : "This row could not be synchronized.",
-        });
+        if (shouldReportSyncIssue(articleCreatedAtByIdentifier.get(identifier))) {
+          syncErrors.push({
+            identifier,
+            error: error instanceof Error ? error.message : "This row could not be synchronized.",
+          });
+        }
       }
     }
 
