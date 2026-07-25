@@ -67,8 +67,14 @@ export default async function handler(req, res) {
     );
     if (!sheetResponse.ok) throw new Error("Couldn’t read the generation prompt from Google Sheets.");
     const { found, prompt } = promptForIdentifier((await sheetResponse.json()).values ?? [], article.generation_identifier);
-    if (!found) return res.status(404).json({ error: `No sheet row was found for identifier ${article.generation_identifier}.` });
-    if (!prompt.trim()) return res.status(404).json({ error: `Column J is empty for identifier ${article.generation_identifier}.` });
+    if (!found) return res.status(409).json({
+      code: "SHEET_ROW_MISSING",
+      error: `Identifier ${article.generation_identifier} is not yet verified in the Google Sheet. Repair the sheet row before generating content.`,
+    });
+    if (!prompt.trim()) return res.status(409).json({
+      code: "GENERATION_PROMPT_MISSING",
+      error: `Column J is empty for identifier ${article.generation_identifier}. Repair the sheet row before generating content.`,
+    });
     return res.status(200).json({ prompt });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t retrieve the generation prompt." });
