@@ -1,4 +1,4 @@
-import { encryptToken, graph, instagramConfig, jsonHeaders, safeError, serviceHeaders, verifyOAuthState } from "./_instagram.js";
+import { discoverInstagramAccount, encryptToken, graph, instagramConfig, serviceHeaders, verifyOAuthState } from "./_instagram.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).send("Method not allowed");
@@ -22,13 +22,14 @@ export default async function handler(req, res) {
       fb_exchange_token: short.access_token,
     });
     const userToken = long.access_token || short.access_token;
-    const pages = await graph("me/accounts", userToken, config, {
-      fields: "id,name,access_token,instagram_business_account{id,username,name,profile_picture_url}",
-      limit: 100,
-    });
-    const page = (pages.data || []).find((item) => item.instagram_business_account?.id);
-    if (!page) throw new Error("No Instagram Business account was found on the Facebook Pages you authorized.");
-    const account = page.instagram_business_account;
+    const discovery = await discoverInstagramAccount(userToken, config);
+    const { page, account } = discovery;
+    if (!page || !account) {
+      const pageSummary = discovery.inspectedPages?.length
+        ? ` Meta returned ${discovery.inspectedPages.length} Page(s): ${discovery.inspectedPages.map((item) => item.name || item.id).join(", ")}.`
+        : " Meta returned no Facebook Pages.";
+      throw new Error(`No connected Instagram professional account was found.${pageSummary}`);
+    }
     const expiresAt = long.expires_in ? new Date(Date.now() + Number(long.expires_in) * 1000).toISOString() : null;
     const response = await fetch(`${config.supabaseUrl}/rest/v1/instagram_connections?on_conflict=user_id`, {
       method: "POST",

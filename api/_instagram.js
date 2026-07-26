@@ -101,6 +101,38 @@ export async function graph(path, token, config, params = {}) {
   return body;
 }
 
+export async function discoverInstagramAccount(userToken, config) {
+  const pages = [];
+  let path = "me/accounts";
+  let params = { fields: "id,name,access_token", limit: 100 };
+
+  while (path) {
+    const batch = await graph(path, userToken, config, params);
+    pages.push(...(batch.data || []));
+    const next = batch.paging?.next;
+    if (!next) break;
+    const nextUrl = new URL(next);
+    path = nextUrl.pathname.replace(/^\/[^/]+\//, "");
+    params = Object.fromEntries(nextUrl.searchParams.entries());
+  }
+
+  for (const page of pages) {
+    const pageToken = page.access_token || userToken;
+    const details = await graph(page.id, pageToken, config, {
+      fields: "id,name,instagram_business_account{id,username,name,profile_picture_url},connected_instagram_account{id,username,name,profile_picture_url}",
+    });
+    const account = details.instagram_business_account || details.connected_instagram_account;
+    if (account?.id) {
+      return {
+        page: { ...page, name: details.name || page.name },
+        account,
+      };
+    }
+  }
+
+  return { page: null, account: null, inspectedPages: pages.map(({ id, name }) => ({ id, name })) };
+}
+
 export function engagementRate(metrics) {
   const reach = Number(metrics.reach || 0);
   const interactions = Number(metrics.total_interactions || (
