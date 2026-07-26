@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   LEGACY_SYNC_ERROR_CUTOFF,
   currentSheetRowNumber,
+  firstMissingImageSequence,
+  countImportedImages,
   isNumericIdentifier,
   shouldReportSyncIssue,
   sheetImageSummary,
@@ -63,4 +65,26 @@ test("persists displayable sheet image links without discarding other image meta
       imported_image_count: 0,
     },
   );
+});
+
+test("resumes image imports from the first missing panel without restarting completed work", () => {
+  const sourceImages = ["one", "two", "three", "four", "five"];
+  const activeAssets = [
+    { sequence: 1, storage_path: "panel-1.png" },
+    { sequence: 2, storage_path: "panel-2.png" },
+    { sequence: 4, storage_path: "panel-4.png" },
+  ];
+  assert.equal(firstMissingImageSequence(sourceImages, activeAssets), 3);
+  assert.equal(countImportedImages(sourceImages, activeAssets), 3);
+});
+
+test("reports image import complete only when every expected panel has an active asset", () => {
+  const sourceImages = ["one", "two"];
+  const activeAssets = [
+    { sequence: 1, storage_path: "panel-1.png" },
+    { sequence: 2, storage_path: "panel-2.png" },
+    { sequence: 8, storage_path: "obsolete.png" },
+  ];
+  assert.equal(firstMissingImageSequence(sourceImages, activeAssets), 0);
+  assert.equal(countImportedImages(sourceImages, activeAssets), 2);
 });
