@@ -5,6 +5,7 @@ import {
   FiArrowLeft,
   FiArrowRight,
   FiBarChart2,
+  FiBookmark,
   FiCheck,
   FiChevronDown,
   FiClock,
@@ -582,6 +583,16 @@ type InstagramCollaborationProspect = {
   analysis_status: AnalysisStatus;
 };
 
+type InstagramSavedItem = {
+  id: string;
+  instagram_url: string;
+  shortcode: string | null;
+  media_type: string;
+  title: string;
+  saved_at: string | null;
+  imported_at: string;
+};
+
 type CollaborationStatus = "explore" | "reached_out" | "in_discussions" | "in_place" | "disqualified";
 type AnalysisStatus = "not_reviewed" | "automated_review" | "deep_review" | "unavailable";
 
@@ -601,11 +612,12 @@ const ANALYSIS_STATUS_LABELS: Record<AnalysisStatus, string> = {
 };
 
 function InstagramInsights({ notify }: { notify: Notify }) {
-  const [tab, setTab] = useState<"performance" | "following" | "followers">("performance");
+  const [tab, setTab] = useState<"performance" | "saved" | "following" | "followers">("performance");
   const [connection, setConnection] = useState<InstagramConnection | null>(null);
   const [posts, setPosts] = useState<InstagramPost[]>([]);
   const [prospects, setProspects] = useState<InstagramCollaborationProspect[]>([]);
   const [followers, setFollowers] = useState<InstagramCollaborationProspect[]>([]);
+  const [savedItems, setSavedItems] = useState<InstagramSavedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -613,6 +625,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
   const [showExportInstructions, setShowExportInstructions] = useState(false);
   const followingFileRef = useRef<HTMLInputElement>(null);
   const followersFileRef = useRef<HTMLInputElement>(null);
+  const savedFileRef = useRef<HTMLInputElement>(null);
   const [sortField, setSortField] = useState<InstagramSortField>("post");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
@@ -621,7 +634,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     setLoading(true);
     const { data: sessionData } = await supabase.auth.getSession();
     if (!sessionData.session) throw new Error("Please sign in again.");
-    let status: { connection: InstagramConnection | null; posts: any[]; prospects?: InstagramCollaborationProspect[]; following?: InstagramCollaborationProspect[]; followers?: InstagramCollaborationProspect[] } | null = null;
+    let status: { connection: InstagramConnection | null; posts: any[]; savedItems?: InstagramSavedItem[]; prospects?: InstagramCollaborationProspect[]; following?: InstagramCollaborationProspect[]; followers?: InstagramCollaborationProspect[] } | null = null;
     const attempts = retryConnection ? [0, 250, 500, 1000] : [0];
     for (const delay of attempts) {
       if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
@@ -653,6 +666,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     }) as InstagramPost[]);
     setProspects((status.following ?? status.prospects ?? []) as InstagramCollaborationProspect[]);
     setFollowers((status.followers ?? []) as InstagramCollaborationProspect[]);
+    setSavedItems((status.savedItems ?? []) as InstagramSavedItem[]);
     setLoading(false);
   };
 
@@ -772,6 +786,34 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     }
   };
 
+  const importSavedItems = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !supabase) return;
+    setImporting(true);
+    try {
+      const html = await file.text();
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("Please sign in again.");
+      const response = await fetch("/api/instagram-saved-import", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ html }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Couldn’t import saved Instagram items.");
+      await load();
+      notify(`Imported ${Number(result.imported || 0).toLocaleString()} saved Instagram items.`);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Couldn’t import the saved-items HTML export.", "error");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const updateCollaborationStatus = async (ids: string[], status: CollaborationStatus) => {
     if (!supabase) return;
     const { data } = await supabase.auth.getSession();
@@ -838,15 +880,20 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     <header className="page-header">
       <div>
         <h1>Instagram Insights</h1>
-        <p>{tab === "performance" ? "Post views, reach, engagement, and performance for your connected business account." : tab === "following" ? "Accounts you follow, audience size, and collaboration fit for Hank and the Squirrel." : "Accounts that follow you, audience size, and collaboration fit for Hank and the Squirrel."}</p>
+        <p>{tab === "performance" ? "Post views, reach, engagement, and performance for your connected business account." : tab === "saved" ? "Instagram posts and Reels you saved for future Hank and the Squirrel ideas." : tab === "following" ? "Accounts you follow, audience size, and collaboration fit for Hank and the Squirrel." : "Accounts that follow you, audience size, and collaboration fit for Hank and the Squirrel."}</p>
       </div>
       <div className="page-actions">
-        {connection && tab !== "performance" && <>
+        {connection && (tab === "following" || tab === "followers") && <>
           <input ref={followingFileRef} type="file" accept=".html,text/html" hidden onChange={(event) => void importRelationship(event, "following")} />
           <input ref={followersFileRef} type="file" accept=".html,text/html" hidden onChange={(event) => void importRelationship(event, "followers")} />
           <button className="button" onClick={() => setShowExportInstructions(true)}><FiHelpCircle /> Export instructions</button>
           <button className="button" disabled={importing || enriching} onClick={() => (tab === "following" ? followingFileRef : followersFileRef).current?.click()}><FiUpload /> {importing ? "Importing…" : `Import ${tab} HTML`}</button>
           {!!(tab === "following" ? prospects : followers).length && <button className="button primary" disabled={enriching || importing} onClick={() => void enrichFollowing().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t refresh profiles.", "error"))}><FiRefreshCw className={enriching ? "spin" : ""} /> {enriching ? "Analyzing…" : "Refresh profiles"}</button>}
+        </>}
+        {connection && tab === "saved" && <>
+          <input ref={savedFileRef} type="file" accept=".html,text/html" hidden onChange={(event) => void importSavedItems(event)} />
+          <button className="button" onClick={() => setShowExportInstructions(true)}><FiHelpCircle /> Export instructions</button>
+          <button className="button primary" disabled={importing} onClick={() => savedFileRef.current?.click()}><FiUpload /> {importing ? "Importing…" : "Import saved HTML"}</button>
         </>}
         {tab === "performance" && (connection
           ? <button className="button primary" disabled={syncing} onClick={() => void sync().catch((error) => notify(error instanceof Error ? error.message : "Instagram refresh failed.", "error"))}><FiRefreshCw className={syncing ? "spin" : ""} /> {syncing ? "Refreshing…" : "Refresh insights"}</button>
@@ -856,6 +903,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     {showExportInstructions && <InstagramExportInstructions onClose={() => setShowExportInstructions(false)} />}
     <div className="instagram-tabs" role="tablist" aria-label="Instagram insight views">
       <button type="button" role="tab" aria-selected={tab === "performance"} className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}><FiBarChart2 /> Post performance</button>
+      <button type="button" role="tab" aria-selected={tab === "saved"} className={tab === "saved" ? "active" : ""} onClick={() => setTab("saved")}><FiBookmark /> Saved Items</button>
       <button type="button" role="tab" aria-selected={tab === "following"} className={tab === "following" ? "active" : ""} onClick={() => setTab("following")}><FiUsers /> Following</button>
       <button type="button" role="tab" aria-selected={tab === "followers"} className={tab === "followers" ? "active" : ""} onClick={() => setTab("followers")}><FiUsers /> Followers</button>
     </div>
@@ -864,7 +912,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
       <h2>Connect @hankandthesquirrel</h2>
       <p>Authorize the Facebook Page connected to your Instagram Business account. Meta credentials remain server-side.</p>
       <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>
-    </div> : tab === "following" ? <InstagramCollaborationTab relationshipType="following" prospects={prospects} lastImportedAt={connection.last_following_import_at} onImport={() => followingFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : tab === "followers" ? <InstagramCollaborationTab relationshipType="followers" prospects={followers} lastImportedAt={connection.last_followers_import_at} onImport={() => followersFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : <>
+    </div> : tab === "saved" ? <InstagramSavedItems items={savedItems} importing={importing} onImport={() => savedFileRef.current?.click()} /> : tab === "following" ? <InstagramCollaborationTab relationshipType="following" prospects={prospects} lastImportedAt={connection.last_following_import_at} onImport={() => followingFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : tab === "followers" ? <InstagramCollaborationTab relationshipType="followers" prospects={followers} lastImportedAt={connection.last_followers_import_at} onImport={() => followersFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : <>
       <div className="instagram-account-bar">
         <div><b>@{connection.instagram_username || "Instagram account"}</b><span>{connection.facebook_page_name || "Connected Facebook Page"}</span></div>
         <span>{connection.last_synced_at ? `Last refreshed ${new Date(connection.last_synced_at).toLocaleString()}` : "Ready for first refresh"}</span>
@@ -904,6 +952,25 @@ function InstagramInsights({ notify }: { notify: Notify }) {
   </section>;
 }
 
+function InstagramSavedItems({ items, importing, onImport }: { items: InstagramSavedItem[]; importing: boolean; onImport: () => void }) {
+  if (!items.length) return <div className="panel instagram-following-empty">
+    <FiBookmark />
+    <h2>Import your saved Instagram items</h2>
+    <p>Instagram does not include personal saves in its connected-account API. Download your Instagram information in HTML format, then upload the saved-posts file here.</p>
+    <button className="button primary" disabled={importing} onClick={onImport}><FiUpload /> {importing ? "Importing…" : "Import saved HTML"}</button>
+  </div>;
+  return <>
+    <div className="instagram-collaboration-note">Showing {items.length.toLocaleString()} saved posts and Reels. Import a newer export at any time; existing links are updated without creating duplicates.</div>
+    <div className="instagram-saved-grid">
+      {items.map((item) => <a className="instagram-saved-card" key={item.id} href={item.instagram_url} target="_blank" rel="noreferrer">
+        <span className="instagram-saved-icon"><FiBookmark /></span>
+        <span><b>{item.title || "Saved Instagram item"}</b><small>{item.media_type === "reel" ? "Reel" : "Post"} · {item.saved_at ? `Saved ${new Date(item.saved_at).toLocaleDateString()}` : `Imported ${new Date(item.imported_at).toLocaleDateString()}`}</small></span>
+        <FiExternalLink />
+      </a>)}
+    </div>
+  </>;
+}
+
 function InstagramExportInstructions({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -919,15 +986,15 @@ function InstagramExportInstructions({ onClose }: { onClose: () => void }) {
     <div className="instagram-export-dialog" role="dialog" aria-modal="true" aria-labelledby="instagram-export-title">
       <button className="modal-close instagram-export-close" aria-label="Close export instructions" onClick={onClose}><FiX /></button>
       <FiUpload className="instagram-export-icon" />
-      <h2 id="instagram-export-title">Export followers and following</h2>
-      <p>Instagram does not share these lists through its API, so download the official HTML export and import each file into its matching tab.</p>
+      <h2 id="instagram-export-title">Export Instagram account data</h2>
+      <p>Instagram does not share followers, following, or personal saved items through its API, so download the official HTML export and import each file into its matching tab.</p>
       <ol>
         <li>Open Instagram, then go to <b>Settings and activity → Accounts Center</b>.</li>
         <li>Select <b>Your information and permissions → Export your information → Create export</b>.</li>
         <li>Choose your <b>@hankandthesquirrel</b> profile, select <b>Export to device</b>, then choose <b>Some of your information</b>.</li>
-        <li>Under Connections, select <b>Followers and following</b>. Set the date range to <b>All time</b> and the format to <b>HTML</b>.</li>
+        <li>Select <b>Followers and following</b> for the relationship tabs and <b>Saved</b> or <b>Saved posts</b> for Saved Items. Set the date range to <b>All time</b> and the format to <b>HTML</b>.</li>
         <li>Create the export. Instagram will notify you when the ZIP file is ready; download and unzip it.</li>
-        <li>Return here and upload <code>following.html</code> in Following and <code>followers_1.html</code> in Followers. If Instagram splits followers across multiple files, upload each file.</li>
+        <li>Return here and upload <code>following.html</code> in Following, <code>followers_1.html</code> in Followers, and the saved-posts HTML file in Saved Items. If Instagram splits an export across multiple files, upload each file.</li>
       </ol>
       <div className="instagram-export-actions">
         <a className="button" href="https://www.facebook.com/help/instagram/181231772500920" target="_blank" rel="noreferrer">Open Meta help <FiExternalLink /></a>
@@ -946,10 +1013,14 @@ function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [bulkStatus, setBulkStatus] = useState<CollaborationStatus>("explore");
   const [updating, setUpdating] = useState(false);
-  const visibleProspects = useMemo(() => prospects.filter((prospect) =>
+  const [updatingStatusIds, setUpdatingStatusIds] = useState<Set<string>>(new Set());
+  const activeProspects = useMemo(() => prospects.filter((prospect) =>
+    (prospect.collaboration_status || "explore") !== "disqualified"
+  ), [prospects]);
+  const visibleProspects = useMemo(() => activeProspects.filter((prospect) =>
     (statusFilter === "all" || (prospect.collaboration_status || "explore") === statusFilter)
     && (analysisFilter === "all" || (prospect.analysis_status || "not_reviewed") === analysisFilter)
-  ), [analysisFilter, prospects, statusFilter]);
+  ), [activeProspects, analysisFilter, statusFilter]);
   const sorted = useMemo(() => [...visibleProspects].sort((a, b) => {
     const comparison = sort === "username"
       ? a.username.localeCompare(b.username)
@@ -957,9 +1028,9 @@ function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt
     return direction === "asc" ? comparison : -comparison;
   }), [direction, sort, visibleProspects]);
   useEffect(() => {
-    const available = new Set(prospects.map((prospect) => prospect.id));
+    const available = new Set(activeProspects.map((prospect) => prospect.id));
     setSelected((current) => new Set([...current].filter((id) => available.has(id))));
-  }, [prospects]);
+  }, [activeProspects]);
   const changeSort = (field: typeof sort) => {
     if (field === sort) setDirection((value) => value === "asc" ? "desc" : "asc");
     else {
@@ -995,6 +1066,32 @@ function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt
       setUpdating(false);
     }
   };
+  const applyInlineStatus = async (id: string, status: CollaborationStatus) => {
+    setUpdatingStatusIds((current) => new Set(current).add(id));
+    try {
+      await onStatusChange([id], status);
+      if (status === "disqualified") {
+        setSelected((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+        setExpanded((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+      }
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Couldn’t update this account.", "error");
+    } finally {
+      setUpdatingStatusIds((current) => {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
   if (!prospects.length) return <div className="panel instagram-following-empty">
     <FiUsers />
     <h2>Import {relationshipType === "followers" ? "your followers" : "the accounts you follow"}</h2>
@@ -1007,12 +1104,12 @@ function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt
       <div><FiRefreshCw /><span><strong>Time to update your {relationshipType}</strong><small>Import a fresh Instagram {relationshipType} HTML file. This reminder appears every three days after your last update.</small></span></div>
       <button className="button primary" disabled={importing} onClick={onImport}><FiUpload /> {importing ? "Importing…" : "Update now"}</button>
     </div>}
-    <div className="instagram-collaboration-note">Showing {visibleProspects.length.toLocaleString()} of {prospects.length.toLocaleString()} {relationshipType === "followers" ? "followers" : "followed accounts"}. Select an account to open its content review, Hank and the Squirrel fit, collaboration evidence, and recommended outreach.</div>
+    <div className="instagram-collaboration-note">Showing {visibleProspects.length.toLocaleString()} of {activeProspects.length.toLocaleString()} active {relationshipType === "followers" ? "followers" : "followed accounts"}. Select an account to open its content review, Hank and the Squirrel fit, collaboration evidence, and recommended outreach.</div>
     <div className="instagram-collaboration-controls">
       <div className="instagram-collaboration-filters">
         <label>Pipeline status <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as CollaborationStatus | "all")}>
           <option value="all">All pipeline statuses</option>
-          {Object.entries(COLLABORATION_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          {Object.entries(COLLABORATION_STATUS_LABELS).filter(([value]) => value !== "disqualified").map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select></label>
         <label>Analysis status <select value={analysisFilter} onChange={(event) => setAnalysisFilter(event.target.value as AnalysisStatus | "all")}>
           <option value="all">All analysis statuses</option>
@@ -1051,7 +1148,15 @@ function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt
           <span>{prospect.profile_data_available && prospect.followers_count !== null ? Number(prospect.followers_count).toLocaleString() : "Unavailable"}</span>
           <span className={`fit-badge fit-${prospect.fit_label.toLowerCase()}`}>{prospect.fit_label} · {prospect.fit_score}</span>
           <span className={`analysis-status analysis-${prospect.analysis_status || "not_reviewed"}`}>{ANALYSIS_STATUS_LABELS[prospect.analysis_status || "not_reviewed"]}</span>
-          <span className={`collaboration-status status-${prospect.collaboration_status || "explore"}`}>{COLLABORATION_STATUS_LABELS[prospect.collaboration_status || "explore"]}</span>
+          <select
+            className={`collaboration-status-select status-${prospect.collaboration_status || "explore"}`}
+            aria-label={`Status for @${prospect.username}`}
+            value={prospect.collaboration_status || "explore"}
+            disabled={updatingStatusIds.has(prospect.id)}
+            onChange={(event) => void applyInlineStatus(prospect.id, event.target.value as CollaborationStatus)}
+          >
+            {Object.entries(COLLABORATION_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
           <button type="button" className="instagram-expand-button" aria-label={`${expanded.has(prospect.id) ? "Collapse" : "Expand"} @${prospect.username}`} onClick={() => toggleExpanded(prospect.id)}><FiChevronDown /></button>
         </div>
         {expanded.has(prospect.id) && <div className="instagram-collaboration-details">

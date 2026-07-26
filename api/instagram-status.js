@@ -16,7 +16,7 @@ export default async function handler(req, res) {
     const user = await authenticatedUser(req, config);
     if (!user) return res.status(401).json({ error: "Sign in required." });
     const userId = encodeURIComponent(user.id);
-    const [connections, posts, prospects] = await Promise.all([
+    const [connections, posts, prospects, savedItems] = await Promise.all([
       fetchRows(
         `${config.supabaseUrl}/rest/v1/instagram_connections?user_id=eq.${userId}&select=instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,last_followers_import_at,token_expires_at&limit=1`,
         config,
@@ -29,6 +29,10 @@ export default async function handler(req, res) {
         `${config.supabaseUrl}/rest/v1/instagram_following?user_id=eq.${userId}&select=id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at,relationship_type,collaboration_status,analysis_status,content_analysis,brand_fit_analysis,existing_collaborations,recommended_outreach,researched_at&order=fit_score.desc&limit=15000`,
         config,
       ),
+      fetchRows(
+        `${config.supabaseUrl}/rest/v1/instagram_saved_items?user_id=eq.${userId}&select=id,instagram_url,shortcode,media_type,title,saved_at,imported_at&order=saved_at.desc.nullslast,imported_at.desc&limit=10000`,
+        config,
+      ),
     ]);
     return res.status(200).json({
       connection: connections[0] || null,
@@ -36,6 +40,7 @@ export default async function handler(req, res) {
       following: prospects.filter((row) => row.relationship_type !== "followers"),
       followers: prospects.filter((row) => row.relationship_type === "followers"),
       prospects: prospects.filter((row) => row.relationship_type !== "followers"),
+      savedItems,
     });
   } catch (error) {
     return safeError(res, error);

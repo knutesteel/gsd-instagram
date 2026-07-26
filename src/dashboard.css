@@ -274,6 +274,14 @@
 .instagram-export-dialog code { padding: 2px 5px; border-radius: 4px; background: #f2eee6; color: #425036; overflow-wrap: anywhere; }
 .instagram-export-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
 .instagram-collaboration-note { margin-bottom: 14px; padding: 12px 15px; border: 1px solid #dfe4d5; border-radius: 9px; background: #eef2e8; color: #526047; font-size: 13px; }
+.instagram-saved-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 16px; }
+.instagram-saved-card { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 86px; padding: 16px; color: inherit; text-decoration: none; background: #fff; border: 1px solid #e0dbd1; border-radius: 14px; transition: border-color .15s ease, transform .15s ease; }
+.instagram-saved-card:hover { border-color: #c85032; transform: translateY(-1px); }
+.instagram-saved-card > span:nth-child(2) { min-width: 0; }
+.instagram-saved-card b, .instagram-saved-card small { display: block; }
+.instagram-saved-card b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.instagram-saved-card small { margin-top: 6px; color: #756f66; }
+.instagram-saved-icon { display: grid; width: 40px; height: 40px; place-items: center; color: #c85032; background: #f7e8e2; border-radius: 10px; }
 .instagram-collaboration-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .instagram-collaboration-controls label { display: flex; align-items: center; gap: 8px; color: #625f57; font-size: 13px; font-weight: 700; }
 .instagram-collaboration-controls select { min-height: 38px; padding: 0 34px 0 11px; border: 1px solid #d9d3c8; border-radius: 8px; background: #fff; color: #2c3028; }
@@ -304,6 +312,8 @@
 .fit-possible { background: #f5ead0; color: #765d28; }
 .fit-analysis { color: #625f57; line-height: 1.45; }
 .collaboration-status { width: fit-content; padding: 5px 8px; border-radius: 999px; background: #f1eee8; color: #625f57; font-size: 11px; font-weight: 800; }
+.collaboration-status-select { width: 100%; min-height: 34px; padding: 5px 28px 5px 9px; border: 1px solid #d9d3c8; border-radius: 8px; background-color: #fff; color: #625f57; font-size: 11px; font-weight: 800; cursor: pointer; }
+.collaboration-status-select:disabled { cursor: wait; opacity: .65; }
 .analysis-status { width: fit-content; padding: 5px 8px; border-radius: 999px; background: #edf0e7; color: #526047; font-size: 11px; font-weight: 800; }
 .analysis-deep_review { background: #e3f2e6; color: #2f6a3f; }
 .analysis-unavailable { background: #f4e9e6; color: #8b493d; }
