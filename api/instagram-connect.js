@@ -12,7 +12,11 @@ export default async function handler(req, res) {
     url.searchParams.set("redirect_uri", config.callbackUrl);
     url.searchParams.set("state", state);
     url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", "instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement");
+    url.searchParams.set(
+      "scope",
+      "instagram_basic,instagram_manage_insights,pages_show_list,pages_read_engagement,business_management",
+    );
+    url.searchParams.set("auth_type", "rerequest");
     return res.status(200).json({ authorizationUrl: url.toString() });
   } catch (error) {
     return safeError(res, error);

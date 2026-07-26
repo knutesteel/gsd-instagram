@@ -75,3 +75,36 @@ test("Instagram discovery accepts Meta's connected account field", async (t) => 
   const result = await discoverInstagramAccount("user-token", { graphVersion: "v24.0" });
   assert.equal(result.account.id, "ig-1");
 });
+
+test("Instagram discovery checks Pages owned by a business portfolio", async (t) => {
+  const originalFetch = global.fetch;
+  t.after(() => { global.fetch = originalFetch; });
+  const calls = [];
+  global.fetch = async (url) => {
+    const parsed = new URL(url);
+    calls.push(parsed.pathname);
+    if (parsed.pathname.endsWith("/me/accounts")) return Response.json({ data: [] });
+    if (parsed.pathname.endsWith("/me/businesses")) {
+      return Response.json({ data: [{ id: "business-1", name: "Get Shit Done" }] });
+    }
+    if (parsed.pathname.endsWith("/business-1/owned_pages")) {
+      return Response.json({
+        data: [{ id: "page-2", name: "Hank and the Squirrel", access_token: "page-token" }],
+      });
+    }
+    return Response.json({
+      id: "page-2",
+      instagram_business_account: { id: "ig-1", username: "hankandthesquirrel" },
+    });
+  };
+
+  const result = await discoverInstagramAccount("user-token", { graphVersion: "v24.0" });
+  assert.equal(result.page.id, "page-2");
+  assert.equal(result.account.username, "hankandthesquirrel");
+  assert.deepEqual(calls, [
+    "/v24.0/me/accounts",
+    "/v24.0/me/businesses",
+    "/v24.0/business-1/owned_pages",
+    "/v24.0/page-2",
+  ]);
+});

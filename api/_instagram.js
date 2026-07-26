@@ -116,6 +116,25 @@ export async function discoverInstagramAccount(userToken, config) {
     params = Object.fromEntries(nextUrl.searchParams.entries());
   }
 
+  // Pages owned by a business portfolio are not always included in /me/accounts.
+  // When Facebook Login grants business_management, enumerate those portfolios
+  // and merge their owned Pages into the same discovery flow.
+  if (!pages.length) {
+    const businesses = await graph("me/businesses", userToken, config, {
+      fields: "id,name",
+      limit: 100,
+    });
+    for (const business of businesses.data || []) {
+      const ownedPages = await graph(`${business.id}/owned_pages`, userToken, config, {
+        fields: "id,name,access_token",
+        limit: 100,
+      });
+      for (const page of ownedPages.data || []) {
+        if (!pages.some((existing) => existing.id === page.id)) pages.push(page);
+      }
+    }
+  }
+
   for (const page of pages) {
     const pageToken = page.access_token || userToken;
     const details = await graph(page.id, pageToken, config, {
