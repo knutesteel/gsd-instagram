@@ -63,6 +63,11 @@ export const uniqueSheetOwner = (articles) => {
   }
   return userIds[0];
 };
+export const sheetImageSummary = (currentSummary, images, importedImageCount = 0) => ({
+  ...(currentSummary || {}),
+  sheet_images: images,
+  imported_image_count: importedImageCount,
+});
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -321,36 +326,81 @@ export default async function handler(req, res) {
     // Pass 2: synchronize captions and image references for every status,
     // including Posted. Posted previously returned early, which permanently
     // hid images when the initial import had not completed.
-    for (const { article, concept, row, sourceImages, images } of enrichmentQueue) {
-      const caption = String(row[10] || "");
-      const hashtags = Array.from(new Set(String(row[11] || "").split(/[\s,]+/).filter(Boolean))).slice(0, 4);
-      const currentImages = Array.isArray(concept.image_summary?.sheet_images) ? concept.image_summary.sheet_images : [];
-      const importedImageCount = Number(concept.image_summary?.imported_image_count || 0);
-      const alreadySynced = JSON.stringify(currentImages) === JSON.stringify(images)
-        && String(concept.caption || "") === caption
-        && JSON.stringify(concept.hashtags || []) === JSON.stringify(hashtags)
-        && (!sourceImages.length || importedImageCount >= sourceImages.length);
-      if (alreadySynced) continue;
-      const conceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
-        method: "PATCH",
-        headers: { ...headers, Prefer: "return=minimal" },
-        body: JSON.stringify({
-          image_summary: { ...(concept.image_summary || {}), sheet_images: images, imported_image_count: 0 },
-          caption,
-          hashtags,
-        }),
-      });
-      if (!conceptUpdate.ok) continue;
+    for (const { identifier, article, concept, row, sourceImages, images } of enrichmentQueue) {
+      try {
+        const caption = String(row[10] || "");
+        const hashtags = Array.from(new Set(String(row[11] || "").split(/[\s,]+/).filter(Boolean))).slice(0, 4);
+        const currentImages = Array.isArray(concept.image_summary?.sheet_images) ? concept.image_summary.sheet_images : [];
+        const importedImageCount = Number(concept.image_summary?.imported_image_count || 0);
+        const imageLinksChanged = JSON.stringify(currentImages) !== JSON.stringify(images);
+        const linksAndTextSynced = !imageLinksChanged
+          && String(concept.caption || "") === caption
+          && JSON.stringify(concept.hashtags || []) === JSON.stringify(hashtags);
 
-      if (sourceImages.length) {
+        // Persist the sheet links first. Generation Details can render these
+        // through the same-origin image proxy even if Drive import is slow or
+        // temporarily unavailable.
+        if (!linksAndTextSynced) {
+          const conceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
+            method: "PATCH",
+            headers: { ...headers, Prefer: "return=representation" },
+            body: JSON.stringify({
+              image_summary: sheetImageSummary(
+                concept.image_summary,
+                images,
+                imageLinksChanged ? 0 : importedImageCount,
+              ),
+              caption,
+              hashtags,
+            }),
+          });
+          if (!conceptUpdate.ok) throw new Error(`Couldn’t save generated image links for #${identifier}.`);
+          const saved = (await conceptUpdate.json())[0];
+          const savedImages = Array.isArray(saved?.image_summary?.sheet_images) ? saved.image_summary.sheet_images : [];
+          if (JSON.stringify(savedImages) !== JSON.stringify(images)) {
+            throw new Error(`Generated image links for #${identifier} did not verify after saving.`);
+          }
+        }
+
+        if (!sourceImages.length || (!imageLinksChanged && importedImageCount >= sourceImages.length)) continue;
         const imported = (await Promise.all(sourceImages.map(async (url, index) => {
           try { return await importImage({ url, accessToken, supabaseUrl, headers, userId: user.id, conceptId: concept.id, sequence: index + 1 }); }
           catch { return null; }
         }))).filter(Boolean);
-        if (imported.length) {
-          await fetch(`${supabaseUrl}/rest/v1/assets?concept_id=eq.${concept.id}&source=eq.generated`, { method: "DELETE", headers });
-          const assetInsert = await fetch(`${supabaseUrl}/rest/v1/assets`, { method: "POST", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify(imported.map((asset) => ({ concept_id: concept.id, user_id: user.id, sequence: asset.sequence, media_type: "image", source: "generated", storage_path: asset.storage_path, mime_type: asset.mime_type }))) });
-          if (assetInsert.ok) await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, { method: "PATCH", headers: { ...headers, Prefer: "return=minimal" }, body: JSON.stringify({ image_summary: { ...(concept.image_summary || {}), sheet_images: images, imported_image_count: imported.length } }) });
+        if (!imported.length) {
+          throw new Error(`Saved ${images.length} image link(s) for #${identifier}, but Drive import will retry on the next sync.`);
+        }
+        const removeOldAssets = await fetch(`${supabaseUrl}/rest/v1/assets?concept_id=eq.${concept.id}&source=eq.generated`, { method: "DELETE", headers });
+        if (!removeOldAssets.ok) throw new Error(`Couldn’t replace generated assets for #${identifier}.`);
+        const assetInsert = await fetch(`${supabaseUrl}/rest/v1/assets`, {
+          method: "POST",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify(imported.map((asset) => ({
+            concept_id: concept.id,
+            user_id: user.id,
+            sequence: asset.sequence,
+            media_type: "image",
+            source: "generated",
+            storage_path: asset.storage_path,
+            mime_type: asset.mime_type,
+          }))),
+        });
+        if (!assetInsert.ok) throw new Error(`Couldn’t save imported assets for #${identifier}.`);
+        const countUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
+          method: "PATCH",
+          headers: { ...headers, Prefer: "return=minimal" },
+          body: JSON.stringify({ image_summary: sheetImageSummary(concept.image_summary, images, imported.length) }),
+        });
+        if (!countUpdate.ok) throw new Error(`Couldn’t finalize imported assets for #${identifier}.`);
+        if (imported.length < sourceImages.length) {
+          throw new Error(`Saved all image links for #${identifier}; imported ${imported.length} of ${sourceImages.length} assets and will retry.`);
+        }
+      } catch (error) {
+        if (shouldReportSyncIssue(article.created_at)) {
+          syncErrors.push({
+            identifier,
+            error: error instanceof Error ? error.message : "Generated images could not be synchronized.",
+          });
         }
       }
     }
