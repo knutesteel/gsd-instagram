@@ -5,6 +5,7 @@ import {
   currentSheetRowNumber,
   isNumericIdentifier,
   shouldReportSyncIssue,
+  sheetImageSummary,
   uniqueNumericSheetRows,
 } from "./sync-sheet-generation.js";
 
@@ -43,4 +44,23 @@ test("suppresses historical sync issues without hiding today or unknown records"
   assert.equal(shouldReportSyncIssue("2026-07-25T12:00:00.000Z"), true);
   assert.equal(shouldReportSyncIssue(null), true);
   assert.equal(shouldReportSyncIssue("not-a-date"), true);
+});
+
+test("persists displayable sheet image links without discarding other image metadata", () => {
+  assert.deepEqual(
+    sheetImageSummary(
+      { origin: "text_overview", content: "Panel copy", imported_image_count: 5 },
+      ["https://drive.google.com/file/d/one/view", "https://drive.google.com/file/d/two/view"],
+      0,
+    ),
+    {
+      origin: "text_overview",
+      content: "Panel copy",
+      sheet_images: [
+        "https://drive.google.com/file/d/one/view",
+        "https://drive.google.com/file/d/two/view",
+      ],
+      imported_image_count: 0,
+    },
+  );
 });
