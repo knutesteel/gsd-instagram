@@ -937,41 +937,70 @@ function AuthGate() {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [message, setMessage] = useState("");
+  const [messageKind, setMessageKind] = useState<"status" | "error">("status");
   const [sending, setSending] = useState(false);
   const [codeSent, setCodeSent] = useState(false);
   const sendCode = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!supabase) return;
-    setSending(true);
-    setMessage("");
-    const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin },
-    });
-    setSending(false);
-    if (error) {
-      setMessage(error.message);
+    if (!email.trim()) {
+      setMessageKind("error");
+      setMessage("Enter your email address first.");
       return;
     }
-    setCodeSent(true);
-    setMessage("We emailed you a 6-digit sign-in code. Enter it below.");
+    setSending(true);
+    setMessage("");
+    setMessageKind("status");
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: {
+          emailRedirectTo: window.location.origin,
+          shouldCreateUser: false,
+        },
+      });
+      if (error) throw error;
+      setCode("");
+      setCodeSent(true);
+      setMessage("We emailed you a new 6-digit code. Use the newest email—requesting another code invalidates the previous one.");
+    } catch (error) {
+      setMessageKind("error");
+      setMessage(error instanceof Error ? error.message : "We couldn’t send a sign-in code. Please try again.");
+    } finally {
+      setSending(false);
+    }
   };
   const verifyCode = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!supabase || code.length !== 6) return;
-    setSending(true);
-    setMessage("");
-    const { error } = await supabase.auth.verifyOtp({
-      email,
-      token: code,
-      type: "email",
-    });
-    setSending(false);
-    if (error) {
-      setMessage(error.message);
+    if (!supabase) return;
+    if (code.length !== 6) {
+      setMessageKind("error");
+      setMessage("Enter all 6 digits from the newest sign-in email.");
       return;
     }
-    setMessage("Signed in. Loading your workspace…");
+    setSending(true);
+    setMessage("");
+    setMessageKind("status");
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: email.trim(),
+        token: code,
+        type: "email",
+      });
+      if (error) throw error;
+      if (!data.session) throw new Error("The code was accepted, but no session was created. Request a new code and try again.");
+      setMessage("Signed in. Loading your workspace…");
+      window.location.replace(window.location.origin);
+    } catch (error) {
+      setMessageKind("error");
+      const detail = error instanceof Error ? error.message : "";
+      const invalidCode = /expired|invalid|otp_expired/i.test(detail);
+      setMessage(invalidCode
+        ? "That code is expired or was replaced by a newer one. Click “Send a new code,” then use the code from the newest email."
+        : detail || "We couldn’t verify that code. Please request a new one and try again.");
+    } finally {
+      setSending(false);
+    }
   };
   const signInWithGoogle = async () => {
     if (!supabase) return;
@@ -982,19 +1011,19 @@ function AuthGate() {
     });
     if (error) { setSending(false); setMessage(error.message); }
   };
-  return <main className="auth-page"><form className="auth-card" onSubmit={codeSent ? verifyCode : sendCode}>
+  return <main className="auth-page"><form className="auth-card" noValidate onSubmit={codeSent ? verifyCode : sendCode}>
     <div className="brand"><span>GSD</span><em>Instagram</em></div>
     <h1>Your story desk</h1><p>Sign in to save research, concepts, and assets privately to your workspace.</p>
     <label className="field"><b>Email address</b><input required disabled={codeSent || sending} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
     {codeSent && <label className="field"><b>6-digit sign-in code</b><input className="auth-code-input" required autoFocus inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" /></label>}
-    <button className="button primary wide" disabled={sending || (codeSent && code.length !== 6)}>{sending ? (codeSent ? "Signing in…" : "Sending…") : (codeSent ? "Sign in with code" : "Email me a sign-in code")}</button>
+    <button type="submit" className="button primary wide" disabled={sending}>{sending ? (codeSent ? "Signing in…" : "Sending…") : (codeSent ? "Sign in with code" : "Email me a sign-in code")}</button>
     {codeSent && <div className="auth-code-actions">
-      <button type="button" disabled={sending} onClick={() => { setCodeSent(false); setCode(""); setMessage(""); }}>Use a different email</button>
-      <button type="button" disabled={sending} onClick={(event) => void sendCode(event)}>Resend code</button>
+      <button type="button" disabled={sending} onClick={() => { setCodeSent(false); setCode(""); setMessage(""); setMessageKind("status"); }}>Use a different email</button>
+      <button type="button" disabled={sending} onClick={(event) => void sendCode(event)}>Send a new code</button>
     </div>}
     <div className="auth-divider"><span>or</span></div>
     <button type="button" className="button wide google-button" disabled={sending} onClick={() => void signInWithGoogle()}><span className="google-mark">G</span> Continue with Google</button>
-    {message && <p className="auth-message">{message}</p>}
+    {message && <p className={`auth-message auth-message-${messageKind}`} role={messageKind === "error" ? "alert" : "status"}>{message}</p>}
   </form></main>;
 }
 

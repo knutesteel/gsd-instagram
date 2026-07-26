@@ -24,3 +24,22 @@
   opacity: 0.55;
   cursor: default;
 }
+
+.auth-message {
+  border-radius: 9px;
+  padding: 12px 14px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.auth-message-status {
+  color: #455934 !important;
+  background: #edf3e7;
+  border: 1px solid #c7d5b9;
+}
+
+.auth-message-error {
+  color: #8f2f1f !important;
+  background: #fff0ec;
+  border: 1px solid #e7aa9c;
+}
