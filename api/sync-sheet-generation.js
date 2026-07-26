@@ -22,6 +22,15 @@ const driveImageUrl = (url) => {
   return id ? `https://drive.google.com/file/d/${id}/view` : url;
 };
 const extensionFor = (contentType) => contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
+const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+export const firstMissingImageSequence = (sourceImages, activeAssets) => {
+  const imported = new Set((activeAssets || []).map((asset) => Number(asset.sequence)).filter(Number.isInteger));
+  return sourceImages.findIndex((_url, index) => !imported.has(index + 1)) + 1;
+};
+export const countImportedImages = (sourceImages, activeAssets) => {
+  const expected = new Set(sourceImages.map((_url, index) => index + 1));
+  return new Set((activeAssets || []).map((asset) => Number(asset.sequence)).filter((sequence) => expected.has(sequence))).size;
+};
 const typeLabel = (postType) => ({ carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" }[postType] || postType || "Carousel");
 const normalizeSheetStatus = (value) => {
   const normalized = String(value || "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
@@ -82,24 +91,38 @@ async function googleToken() {
 async function importImage({ url, accessToken, supabaseUrl, headers, userId, conceptId, sequence }) {
   const id = driveFileId(url);
   const candidates = id ? [
-    `https://lh3.googleusercontent.com/d/${id}=w2400`,
-    `https://www.googleapis.com/drive/v3/files/${id}?alt=media`,
-    `https://drive.google.com/uc?export=download&id=${id}`,
-  ] : [url];
+    { url: `https://www.googleapis.com/drive/v3/files/${id}?alt=media`, headers: { Authorization: `Bearer ${accessToken}` } },
+    { url: `https://lh3.googleusercontent.com/d/${id}=w2400` },
+    { url: `https://drive.usercontent.google.com/download?id=${id}&export=view&confirm=t` },
+    { url: `https://drive.google.com/uc?export=view&id=${id}` },
+  ] : [{ url }];
   let imageResponse;
+  const failures = [];
   for (const candidate of candidates) {
-    const response = await fetch(candidate, candidate.includes("googleapis.com") ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined);
-    if (response.ok && String(response.headers.get("content-type") || "").startsWith("image/")) { imageResponse = response; break; }
+    try {
+      const response = await fetch(candidate.url, { redirect: "follow", headers: candidate.headers });
+      const contentType = String(response.headers.get("content-type") || "").split(";")[0];
+      if (response.ok && contentType.startsWith("image/")) { imageResponse = response; break; }
+      failures.push(`${new URL(candidate.url).hostname}: HTTP ${response.status}, ${contentType || "unknown type"}`);
+    } catch {
+      failures.push(`${new URL(candidate.url).hostname}: request failed`);
+    }
   }
-  if (!imageResponse) return null;
+  if (!imageResponse) throw new Error(`Drive download failed (${failures.join("; ")}).`);
   const contentType = String(imageResponse.headers.get("content-type") || "image/jpeg").split(";")[0];
+  const bytes = Buffer.from(await imageResponse.arrayBuffer());
+  if (!bytes.length) throw new Error("Drive returned an empty image.");
+  if (bytes.length > MAX_IMAGE_BYTES) throw new Error(`Drive image exceeds the ${MAX_IMAGE_BYTES / 1024 / 1024} MB limit.`);
   const storagePath = `${userId}/generated/${conceptId}/panel-${sequence}.${extensionFor(contentType)}`;
   const upload = await fetch(`${supabaseUrl}/storage/v1/object/post-assets/${storagePath}`, {
     method: "POST",
     headers: { ...headers, "Content-Type": contentType, "x-upsert": "true" },
-    body: Buffer.from(await imageResponse.arrayBuffer()),
+    body: bytes,
   });
-  if (!upload.ok) return null;
+  if (!upload.ok) {
+    const details = await upload.text().catch(() => "");
+    throw new Error(`Storage upload failed with HTTP ${upload.status}${details ? `: ${details.slice(0, 180)}` : ""}.`);
+  }
   return { sequence, storage_path: storagePath, mime_type: contentType };
 }
 async function restoreMissingSheetRows({ rows, accessToken, supabaseUrl, headers, userId }) {
@@ -362,39 +385,70 @@ export default async function handler(req, res) {
           }
         }
 
-        if (!sourceImages.length || (!imageLinksChanged && importedImageCount >= sourceImages.length)) continue;
-        const imported = (await Promise.all(sourceImages.map(async (url, index) => {
-          try { return await importImage({ url, accessToken, supabaseUrl, headers, userId: user.id, conceptId: concept.id, sequence: index + 1 }); }
-          catch { return null; }
-        }))).filter(Boolean);
-        if (!imported.length) {
-          throw new Error(`Saved ${images.length} image link(s) for #${identifier}, but Drive import will retry on the next sync.`);
+        if (!sourceImages.length) continue;
+        const assetsResponse = await fetch(
+          `${supabaseUrl}/rest/v1/assets?concept_id=eq.${concept.id}&source=eq.generated&is_active=eq.true&select=id,sequence,storage_path`,
+          { headers },
+        );
+        if (!assetsResponse.ok) throw new Error(`Couldn’t inspect imported assets for #${identifier}.`);
+        const activeAssets = await assetsResponse.json();
+        const nextSequence = firstMissingImageSequence(sourceImages, activeAssets);
+        const currentImportedCount = countImportedImages(sourceImages, activeAssets);
+        if (!nextSequence) {
+          if (importedImageCount !== currentImportedCount) {
+            const countUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
+              method: "PATCH",
+              headers: { ...headers, Prefer: "return=minimal" },
+              body: JSON.stringify({ image_summary: sheetImageSummary(concept.image_summary, images, currentImportedCount) }),
+            });
+            if (!countUpdate.ok) throw new Error(`Couldn’t verify imported assets for #${identifier}.`);
+          }
+          continue;
         }
-        const removeOldAssets = await fetch(`${supabaseUrl}/rest/v1/assets?concept_id=eq.${concept.id}&source=eq.generated`, { method: "DELETE", headers });
-        if (!removeOldAssets.ok) throw new Error(`Couldn’t replace generated assets for #${identifier}.`);
+
+        // Import one missing panel per item per run. Each panel is committed
+        // immediately, so a serverless timeout cannot erase progress or force
+        // the next scheduled run to restart the entire carousel.
+        const imported = await importImage({
+          url: sourceImages[nextSequence - 1],
+          accessToken,
+          supabaseUrl,
+          headers,
+          userId: user.id,
+          conceptId: concept.id,
+          sequence: nextSequence,
+        });
+        const removeSameSequence = await fetch(
+          `${supabaseUrl}/rest/v1/assets?concept_id=eq.${concept.id}&source=eq.generated&sequence=eq.${nextSequence}`,
+          { method: "DELETE", headers },
+        );
+        if (!removeSameSequence.ok) throw new Error(`Couldn’t replace generated panel ${nextSequence} for #${identifier}.`);
         const assetInsert = await fetch(`${supabaseUrl}/rest/v1/assets`, {
           method: "POST",
-          headers: { ...headers, Prefer: "return=minimal" },
-          body: JSON.stringify(imported.map((asset) => ({
+          headers: { ...headers, Prefer: "return=representation" },
+          body: JSON.stringify([{
             concept_id: concept.id,
             user_id: user.id,
-            sequence: asset.sequence,
+            sequence: imported.sequence,
             media_type: "image",
             source: "generated",
-            storage_path: asset.storage_path,
-            mime_type: asset.mime_type,
-          }))),
+            storage_path: imported.storage_path,
+            mime_type: imported.mime_type,
+            is_active: true,
+          }]),
         });
-        if (!assetInsert.ok) throw new Error(`Couldn’t save imported assets for #${identifier}.`);
+        if (!assetInsert.ok) throw new Error(`Couldn’t save imported panel ${nextSequence} for #${identifier}.`);
+        const savedAssets = await assetInsert.json();
+        if (!savedAssets.some((asset) => Number(asset.sequence) === nextSequence && asset.storage_path === imported.storage_path)) {
+          throw new Error(`Imported panel ${nextSequence} for #${identifier} did not verify after saving.`);
+        }
+        const newImportedCount = currentImportedCount + 1;
         const countUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
           method: "PATCH",
           headers: { ...headers, Prefer: "return=minimal" },
-          body: JSON.stringify({ image_summary: sheetImageSummary(concept.image_summary, images, imported.length) }),
+          body: JSON.stringify({ image_summary: sheetImageSummary(concept.image_summary, images, newImportedCount) }),
         });
         if (!countUpdate.ok) throw new Error(`Couldn’t finalize imported assets for #${identifier}.`);
-        if (imported.length < sourceImages.length) {
-          throw new Error(`Saved all image links for #${identifier}; imported ${imported.length} of ${sourceImages.length} assets and will retry.`);
-        }
       } catch (error) {
         if (shouldReportSyncIssue(article.created_at)) {
           syncErrors.push({
