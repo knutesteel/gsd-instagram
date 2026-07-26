@@ -1,4 +1,7 @@
-import { discoverInstagramAccount, encryptToken, graph, instagramConfig, serviceHeaders, verifyOAuthState } from "./_instagram.js";
+import {
+  discoverInstagramAccount, encryptToken, exchangeLongLivedToken,
+  instagramConfig, serviceHeaders, verifyOAuthState,
+} from "./_instagram.js";
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return res.status(405).send("Method not allowed");
@@ -15,12 +18,7 @@ export default async function handler(req, res) {
     const shortResponse = await fetch(tokenUrl);
     const short = await shortResponse.json();
     if (!shortResponse.ok || !short.access_token) throw new Error(short.error?.message || "Meta did not return an access token.");
-    const long = await graph("oauth/access_token", short.access_token, config, {
-      grant_type: "fb_exchange_token",
-      client_id: config.appId,
-      client_secret: config.appSecret,
-      fb_exchange_token: short.access_token,
-    });
+    const long = await exchangeLongLivedToken(short.access_token, config);
     const userToken = long.access_token || short.access_token;
     const discovery = await discoverInstagramAccount(userToken, config);
     const { page, account } = discovery;
@@ -41,15 +39,17 @@ export default async function handler(req, res) {
         facebook_page_id: page.id,
         facebook_page_name: page.name || null,
         access_token_encrypted: encryptToken(page.access_token || userToken, config.encryptionKey),
+        user_access_token_encrypted: encryptToken(userToken, config.encryptionKey),
         token_expires_at: expiresAt,
+        token_last_refreshed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       }),
     });
     if (!response.ok) throw new Error("Couldn’t save the Instagram connection.");
-    return res.redirect(302, `${config.appUrl}/?instagram=connected`);
+    return res.redirect(302, `${config.appUrl}/?view=insights&instagram=connected`);
   } catch (error) {
     console.error(error);
-    const destination = `${config?.appUrl || "https://gsd-instagram2.vercel.app"}/?instagram=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Instagram authorization failed.")}`;
+    const destination = `${config?.appUrl || "https://gsd-instagram2.vercel.app"}/?view=insights&instagram=error&message=${encodeURIComponent(error instanceof Error ? error.message : "Instagram authorization failed.")}`;
     return res.redirect(302, destination);
   }
 }

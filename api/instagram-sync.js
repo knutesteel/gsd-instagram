@@ -1,7 +1,8 @@
 import {
-  authenticatedUser, decryptToken, engagementRate, graph, identifierFromCaption,
+  authenticatedUser, engagementRate, graph, identifierFromCaption,
   instagramConfig, safeError, serviceHeaders,
 } from "./_instagram.js";
+import { persistentInstagramToken } from "./_instagram-token.js";
 
 const metricNames = ["reach", "saved", "shares", "total_interactions", "views", "plays", "ig_reels_avg_watch_time", "ig_reels_video_view_total_time"];
 
@@ -25,7 +26,7 @@ async function syncForUser(userId, config) {
   });
   const connection = (await connectionResponse.json())[0];
   if (!connection) throw new Error("Connect Instagram before refreshing insights.");
-  const token = decryptToken(connection.access_token_encrypted, config.encryptionKey);
+  const token = await persistentInstagramToken(connection, config);
   const profile = await graph(connection.instagram_account_id, token, config, {
     fields: "username,followers_count,media_count",
   });

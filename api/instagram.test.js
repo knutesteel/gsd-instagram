@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createOAuthState, decryptToken, encryptToken, engagementRate,
-  discoverInstagramAccount, identifierFromCaption, verifyOAuthState,
+  discoverInstagramAccount, identifierFromCaption, tokenRefreshDue, verifyOAuthState,
 } from "./_instagram.js";
 
 test("OAuth state verifies and rejects tampering", () => {
@@ -29,6 +29,14 @@ test("engagement rate uses reach as denominator", () => {
   assert.equal(engagementRate({ reach: 1000, total_interactions: 75 }), 7.5);
   assert.equal(engagementRate({ reach: 100, like_count: 4, comments_count: 2, saved: 3, shares: 1 }), 10);
   assert.equal(engagementRate({ reach: 0, total_interactions: 5 }), 0);
+});
+
+test("token renewal starts fourteen days before expiration", () => {
+  const now = Date.parse("2026-07-26T12:00:00.000Z");
+  assert.equal(tokenRefreshDue("2026-08-20T12:00:00.000Z", now), false);
+  assert.equal(tokenRefreshDue("2026-08-09T12:00:00.000Z", now), true);
+  assert.equal(tokenRefreshDue("2026-07-25T12:00:00.000Z", now), true);
+  assert.equal(tokenRefreshDue(null, now), false);
 });
 
 test("Instagram discovery checks each authorized Page", async (t) => {

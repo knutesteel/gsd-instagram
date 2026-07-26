@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 30228)
+Total output lines: 2137
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -116,7 +119,9 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
 }
 
 function App() {
-  const [screen, setScreen] = useState<Screen>("dashboard");
+  const [screen, setScreen] = useState<Screen>(() =>
+    new URLSearchParams(window.location.search).get("view") === "insights" ? "insights" : "dashboard"
+  );
   const [items, setItems] = useState<Story[]>([]);
   const [selected, setSelected] = useState("");
   const [query, setQuery] = useState("");
@@ -585,11 +590,21 @@ function InstagramInsights({ notify }: { notify: Notify }) {
   const [sortField, setSortField] = useState<InstagramSortField>("post");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
-  const load = async () => {
+  const load = async (retryConnection = false) => {
     if (!supabase) return;
     setLoading(true);
-    const [connectionResult, postsResult, prospectsResult] = await Promise.all([
-      supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").maybeSingle(),
+    let connectionResult = await supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").maybeSingle();
+    if (retryConnection && !connectionResult.error && !connectionResult.data) {
+      // The OAuth callback writes through the server and redirects immediately.
+      // Retry briefly so a just-saved connection is reflected before rendering
+      // the empty connection card.
+      for (const delay of [250, 500, 1000]) {
+        await new Promise((resolve) => window.setTimeout(resolve, delay));
+        connectionResult = await supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").maybeSingle();
+        if (connectionResult.error || connectionResult.data) break;
+      }
+    }
+    const [postsResult, prospectsResult] = await Promise.all([
       supabase.from("instagram_media").select("id,article_id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,published_at,like_count,comments_count,instagram_media_insights(captured_on,views,reach,saved,shares,total_interactions,raw_metrics)").order("published_at", { ascending: false }).limit(500),
       supabase.from("instagram_following").select("id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at").order("fit_score", { ascending: false }).limit(7500),
     ]);
@@ -620,14 +635,15 @@ function InstagramInsights({ notify }: { notify: Notify }) {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("instagram") === "connected") {
+    const connected = params.get("instagram") === "connected";
+    if (connected) {
       notify("Instagram connected successfully.");
-      window.history.replaceState({}, "", window.location.pathname);
+      window.history.replaceState({}, "", `${window.location.pathname}?view=insights`);
     } else if (params.get("instagram") === "error") {
       notify(params.get("message") || "Instagram authorization failed.", "error");
-      window.history.replaceState({}, "", window.location.pathname);
+      window.history.replaceState({}, "", `${window.location.pathname}?view=insights`);
     }
-    void load().catch((error) => {
+    void load(connected).catch((error) => {
       setLoading(false);
       notify(error instanceof Error ? error.message : "Couldn’t load Instagram insights.", "error");
     });
@@ -1029,9 +1045,7 @@ function Guidance() {
     const text = kind === "voice_guide" ? voiceText : kind === "icp" ? icpText : visualText;
     const setText = kind === "voice_guide" ? setVoiceText : kind === "icp" ? setIcpText : setVisualText;
     const asset = bundledPromptAssets[kind];
-    return <article className="guidance-card"><span className="guidance-icon"><FiBookOpen /></span><h2>{title}</h2><p>{description}</p>{kind === "voice_guide" && <p className="prompt-character-count">Combined prompt length: {combinedPromptCharacterCount.toLocaleString()} characters</p>}{latest && <p className="last-updated">Last Updated {new Date(latest.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} <button className="view-button" onClick={() => setViewing(latest)}>View</button></p>}<label className="button primary wide"><FiUploadCloud /> {uploading === kind ? "Uploading…" : `Upload replacement prompt`}<input hidden type="file" accept=".md,.txt,text/markdown,text/plain,application/text" disabled={Boolean(uploading)} onChange={(e) => { void upload(kind, e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>Markdown or TXT · 10 MB max · private to your workspace</small><Field label="Editable prompt"><textarea className="voice-editor" value={text} onChange={(e) => setText(e.target.value)} placeholder={`Paste or upload the ${title.toLowerCase()} here…`} /></Field><button className="button wide" onClick={() => void saveGuide(kind, text, asset.fileName)} disabled={savingVoice}>{savingVoice ? "Saving…" : "Save prompt"}</button>{docs.length > 0 ? <div className="document-list">{docs.map((doc) => <div key={doc.id}><FiFileText /> <span>{doc.file_name}</span><button aria-label={`Delete ${doc.file_name}`} className="text-danger" onClick={() => void deleteDocument(doc)}><FiTrash2 /></button></div>)}</div> : <div className="document-empty">Prompt asset is being installed…</div>}</article>;
-  };
-  return <section><header className="page-header"><div><h1>Prompt assets</h1><p>Your ICP, Voice, and Image prompts are the source of truth for research, prompt generation, and production. They are installed to your private workspace automatically.</p></div>{installing && <span className="chip"><FiRefreshCw className="spin" /> Installing prompts…</span>}</header><div className="guidance-grid">{card("icp", "ICP Prompt", "Defines the audience, emotional reality, and practical relevance every post should recognize.")}{card("voice_guide", "Voice Prompt", "Defines Hank and the squirrel’s writing voice, humor, dialogue, and brand guardrails.")}{card("visual_guide", "Image Prompt", "Defines character identity, scale, wardrobe, palette, composition, and continuity for generated assets.")}</div>{message && <p className="guidance-message">{message}</p>}{viewing && <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(24,28,22,.56)", zIndex: 20, display: "grid", placeItems: "center", padding: 24 }}><div style={{ position: "relative", width: "min(850px, 100%)", maxHeight: "82vh", overflow: "auto", background: "#fffdf9", borderRadius: 16, padding: 32, boxShadow: "0 22px 70px rgba(0,0,0,.28)" }}><button className="modal-close" style={{ position: "absolute", top: 16, right: 16, fontSize: 22 }} onClick={() => setViewing(null)}><FiX /></button><h2 style={{ fontFamily: "Playfair Display", fontSize: 32, margin: "0 0 6px" }}>{viewing.kind === "icp" ? "ICP Prompt" : viewing.kind === "voice_guide" ? "Voice Prompt" : "Image Prompt"}</h2><p style={{ color: "#777168", margin: "0 0 22px" }}>{viewing.file_name}</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 1.6, background: "#f5f2ea", padding: 20, borderRadius: 10, margin: 0 }}>{viewing.text_content || "This prompt asset does not contain viewable Markdown/text."}</pre></div></div>}<div className="panel guidance-note"><FiCheck /><div><b>Private prompt assets</b><p>These prompt assets are stored in your private Supabase bucket and used by future research and generation requests.</p></div></div></section>;
+    return <article className="guidance-card"><span className="guidance-icon"><FiBookOpen /></span><h2>{title}</h2><p>{description}</p>{kind === "voice_guide" && <p className="prompt-character-count">Combined prompt length: {combinedPromptCharacterCount.toLocaleString()} characters</p>}{latest && <p className="last-updated">Last Updated {new Date(latest.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })} <button className="view-button" onClick={() => setViewing(latest)}>View</button></p>}<label className="button primary wide"><FiUploadCloud /> {uploading === kind ? "Uploading…" : `Upload replacement prompt`}<input hidden type="file" accept=".md,.txt,text/markdown,text/plain,application/text" disabled={Boolean(uploading)} onChange={(e) => { void upload(kind, e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><small>Markdown or TXT · 10 MB max · private to your workspace</small><Field label="Editable prompt"><textarea className="voice-editor" value={text} onChange={(e) => setText(e.target.value)} placeholder={`Paste or upload the ${title.toLowerCase()} here…`} /></Field><button className="button wide" onClick={() => void saveGuide(kind, text, asset.fileName)} disabled={savingVoice}>{savingVoice ? "Saving…" : "Save prompt"}</button>{docs.length > 0 ? <div className="document-list">{docs.map((doc) => <div key={doc.id}><FiFileText /> <span>{doc.file_name}</span><b…228 tokens truncated…"Image Prompt", "Defines character identity, scale, wardrobe, palette, composition, and continuity for generated assets.")}</div>{message && <p className="guidance-message">{message}</p>}{viewing && <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(24,28,22,.56)", zIndex: 20, display: "grid", placeItems: "center", padding: 24 }}><div style={{ position: "relative", width: "min(850px, 100%)", maxHeight: "82vh", overflow: "auto", background: "#fffdf9", borderRadius: 16, padding: 32, boxShadow: "0 22px 70px rgba(0,0,0,.28)" }}><button className="modal-close" style={{ position: "absolute", top: 16, right: 16, fontSize: 22 }} onClick={() => setViewing(null)}><FiX /></button><h2 style={{ fontFamily: "Playfair Display", fontSize: 32, margin: "0 0 6px" }}>{viewing.kind === "icp" ? "ICP Prompt" : viewing.kind === "voice_guide" ? "Voice Prompt" : "Image Prompt"}</h2><p style={{ color: "#777168", margin: "0 0 22px" }}>{viewing.file_name}</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", lineHeight: 1.6, background: "#f5f2ea", padding: 20, borderRadius: 10, margin: 0 }}>{viewing.text_content || "This prompt asset does not contain viewable Markdown/text."}</pre></div></div>}<div className="panel guidance-note"><FiCheck /><div><b>Private prompt assets</b><p>These prompt assets are stored in your private Supabase bucket and used by future research and generation requests.</p></div></div></section>;
 }
 
 */

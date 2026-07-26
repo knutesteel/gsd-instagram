@@ -101,6 +101,21 @@ export async function graph(path, token, config, params = {}) {
   return body;
 }
 
+export async function exchangeLongLivedToken(token, config) {
+  return graph("oauth/access_token", token, config, {
+    grant_type: "fb_exchange_token",
+    client_id: config.appId,
+    client_secret: config.appSecret,
+    fb_exchange_token: token,
+  });
+}
+
+export function tokenRefreshDue(expiresAt, now = Date.now(), refreshWindowDays = 14) {
+  if (!expiresAt) return false;
+  const expiration = new Date(expiresAt).getTime();
+  return !Number.isFinite(expiration) || expiration <= now + refreshWindowDays * 24 * 60 * 60 * 1000;
+}
+
 export async function discoverInstagramAccount(userToken, config) {
   const pages = [];
   let path = "me/accounts";
