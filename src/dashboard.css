@@ -307,7 +307,7 @@
 .status-reached_out { background: #e6edf3; color: #39586d; }
 .status-in_discussions { background: #f5ead0; color: #765d28; }
 .status-in_place { background: #dcebd6; color: #385732; }
-.status-archived { background: #ece9e4; color: #777168; }
+.status-disqualified { background: #ece9e4; color: #777168; }
 .instagram-expand-button { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #6f6a61; cursor: pointer; }
 .instagram-collaboration-record.expanded .instagram-expand-button svg { transform: rotate(180deg); }
 .instagram-expand-button svg { transition: transform .18s ease; }
