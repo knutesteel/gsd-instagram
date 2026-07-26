@@ -71,3 +71,10 @@ export function collaborationFit(profile = {}) {
     : "Limited profile overlap is visible. Review recent content manually before proposing a collaboration.";
   return { fit_score: score, fit_label: fit, fit_analysis: analysis };
 }
+
+export function followingRefreshDue(lastImportedAt, now = Date.now()) {
+  if (!lastImportedAt) return true;
+  const importedAt = new Date(lastImportedAt).getTime();
+  if (!Number.isFinite(importedAt)) return true;
+  return now - importedAt >= 3 * 24 * 60 * 60 * 1000;
+}

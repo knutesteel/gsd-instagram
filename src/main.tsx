@@ -14,6 +14,7 @@ import {
   FiExternalLink,
   FiFileText,
   FiGrid,
+  FiHelpCircle,
   FiMoreHorizontal,
   FiPlus,
   FiRefreshCw,
@@ -519,7 +520,9 @@ function App() {
 type InstagramConnection = {
   instagram_username: string | null;
   facebook_page_name: string | null;
+  followers_count: number | null;
   last_synced_at: string | null;
+  last_following_import_at: string | null;
   token_expires_at: string | null;
 };
 
@@ -577,6 +580,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
   const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [enriching, setEnriching] = useState(false);
+  const [showExportInstructions, setShowExportInstructions] = useState(false);
   const followingFileRef = useRef<HTMLInputElement>(null);
   const [sortField, setSortField] = useState<InstagramSortField>("post");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
@@ -585,7 +589,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     if (!supabase) return;
     setLoading(true);
     const [connectionResult, postsResult, prospectsResult] = await Promise.all([
-      supabase.from("instagram_connections").select("instagram_username,facebook_page_name,last_synced_at,token_expires_at").maybeSingle(),
+      supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").maybeSingle(),
       supabase.from("instagram_media").select("id,article_id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,published_at,like_count,comments_count,instagram_media_insights(captured_on,views,reach,saved,shares,total_interactions,raw_metrics)").order("published_at", { ascending: false }).limit(500),
       supabase.from("instagram_following").select("id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at").order("fit_score", { ascending: false }).limit(7500),
     ]);
@@ -767,6 +771,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
       <div className="page-actions">
         {connection && tab === "collaborations" && <>
           <input ref={followingFileRef} type="file" accept=".json,application/json" hidden onChange={(event) => void importFollowing(event)} />
+          <button className="button" onClick={() => setShowExportInstructions(true)}><FiHelpCircle /> Export instructions</button>
           <button className="button" disabled={importing || enriching} onClick={() => followingFileRef.current?.click()}><FiUpload /> {importing ? "Importing…" : "Import following JSON"}</button>
           {!!prospects.length && <button className="button primary" disabled={enriching || importing} onClick={() => void enrichFollowing().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t refresh profiles.", "error"))}><FiRefreshCw className={enriching ? "spin" : ""} /> {enriching ? "Analyzing…" : "Refresh profiles"}</button>}
         </>}
@@ -775,6 +780,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
           : <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>)}
       </div>
     </header>
+    {showExportInstructions && <InstagramExportInstructions onClose={() => setShowExportInstructions(false)} />}
     <div className="instagram-tabs" role="tablist" aria-label="Instagram insight views">
       <button type="button" role="tab" aria-selected={tab === "performance"} className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}><FiBarChart2 /> Post performance</button>
       <button type="button" role="tab" aria-selected={tab === "collaborations"} className={tab === "collaborations" ? "active" : ""} onClick={() => setTab("collaborations")}><FiUsers /> Collaboration fit</button>
@@ -784,12 +790,13 @@ function InstagramInsights({ notify }: { notify: Notify }) {
       <h2>Connect @hankandthesquirrel</h2>
       <p>Authorize the Facebook Page connected to your Instagram Business account. Meta credentials remain server-side.</p>
       <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>
-    </div> : tab === "collaborations" ? <InstagramCollaborationTab prospects={prospects} onImport={() => followingFileRef.current?.click()} importing={importing} /> : <>
+    </div> : tab === "collaborations" ? <InstagramCollaborationTab prospects={prospects} lastImportedAt={connection.last_following_import_at} onImport={() => followingFileRef.current?.click()} importing={importing} /> : <>
       <div className="instagram-account-bar">
         <div><b>@{connection.instagram_username || "Instagram account"}</b><span>{connection.facebook_page_name || "Connected Facebook Page"}</span></div>
         <span>{connection.last_synced_at ? `Last refreshed ${new Date(connection.last_synced_at).toLocaleString()}` : "Ready for first refresh"}</span>
       </div>
       <div className="insights-metrics">
+        <InsightMetric label="Followers" value={Number(connection.followers_count || 0).toLocaleString()} />
         <InsightMetric label="Posts collected" value={posts.length.toLocaleString()} />
         <InsightMetric label="Views" value={sum("views").toLocaleString()} />
         <InsightMetric label="Reach" value={totalReach.toLocaleString()} />
@@ -823,7 +830,40 @@ function InstagramInsights({ notify }: { notify: Notify }) {
   </section>;
 }
 
-function InstagramCollaborationTab({ prospects, onImport, importing }: { prospects: InstagramCollaborationProspect[]; onImport: () => void; importing: boolean }) {
+function InstagramExportInstructions({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return <div className="instagram-export-backdrop" role="presentation" onMouseDown={(event) => {
+    if (event.target === event.currentTarget) onClose();
+  }}>
+    <div className="instagram-export-dialog" role="dialog" aria-modal="true" aria-labelledby="instagram-export-title">
+      <button className="modal-close instagram-export-close" aria-label="Close export instructions" onClick={onClose}><FiX /></button>
+      <FiUpload className="instagram-export-icon" />
+      <h2 id="instagram-export-title">Export the accounts you follow</h2>
+      <p>Instagram does not share your following list through its API, so download the official JSON export and import one file into this tab.</p>
+      <ol>
+        <li>Open Instagram, then go to <b>Settings and activity → Accounts Center</b>.</li>
+        <li>Select <b>Your information and permissions → Export your information → Create export</b>.</li>
+        <li>Choose your <b>@hankandthesquirrel</b> profile, select <b>Export to device</b>, then choose <b>Some of your information</b>.</li>
+        <li>Under Connections, select <b>Followers and following</b>. Set the date range to <b>All time</b> and the format to <b>JSON</b>.</li>
+        <li>Create the export. Instagram will notify you when the ZIP file is ready; download and unzip it.</li>
+        <li>Return here and import <code>connections/followers_and_following/following.json</code>.</li>
+      </ol>
+      <div className="instagram-export-actions">
+        <a className="button" href="https://www.facebook.com/help/instagram/181231772500920" target="_blank" rel="noreferrer">Open Meta help <FiExternalLink /></a>
+        <button className="button primary" onClick={onClose}>Got it</button>
+      </div>
+    </div>
+  </div>;
+}
+
+function InstagramCollaborationTab({ prospects, lastImportedAt, onImport, importing }: { prospects: InstagramCollaborationProspect[]; lastImportedAt: string | null; onImport: () => void; importing: boolean }) {
   const [sort, setSort] = useState<"username" | "followers_count" | "fit_score">("fit_score");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const sorted = useMemo(() => [...prospects].sort((a, b) => {
@@ -848,7 +888,12 @@ function InstagramCollaborationTab({ prospects, onImport, importing }: { prospec
     <p>Instagram’s API does not provide a following list. Download your Instagram information in JSON format, then upload the <code>following.json</code> file here. Professional profiles will be enriched with follower totals; personal and private profiles will be marked unavailable.</p>
     <button className="button primary" disabled={importing} onClick={onImport}><FiUpload /> {importing ? "Importing…" : "Import following JSON"}</button>
   </div>;
+  const refreshDue = !lastImportedAt || Date.now() - new Date(lastImportedAt).getTime() >= 3 * 24 * 60 * 60 * 1000;
   return <>
+    {refreshDue && <div className="instagram-following-reminder" role="status">
+      <div><FiRefreshCw /><span><strong>Time to update the accounts you follow</strong><small>Import a fresh Instagram following JSON file. This reminder appears every three days after your last update.</small></span></div>
+      <button className="button primary" disabled={importing} onClick={onImport}><FiUpload /> {importing ? "Importing…" : "Update now"}</button>
+    </div>}
     <div className="instagram-collaboration-note">Showing {prospects.length.toLocaleString()} followed accounts. Follower totals are available only where Meta exposes a professional profile.</div>
     <div className="instagram-collaboration-table">
       <div className="instagram-collaboration-head">

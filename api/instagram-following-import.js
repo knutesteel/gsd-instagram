@@ -24,7 +24,14 @@ export default async function handler(req, res) {
       body: JSON.stringify(rows),
     });
     if (!response.ok) throw new Error("Couldn’t save the Instagram following list.");
-    return res.status(200).json({ imported: rows.length });
+    const importedAt = new Date().toISOString();
+    const connectionResponse = await fetch(`${config.supabaseUrl}/rest/v1/instagram_connections?user_id=eq.${encodeURIComponent(user.id)}`, {
+      method: "PATCH",
+      headers: serviceHeaders(config),
+      body: JSON.stringify({ last_following_import_at: importedAt }),
+    });
+    if (!connectionResponse.ok) throw new Error("The accounts were imported, but the update reminder couldn’t be reset.");
+    return res.status(200).json({ imported: rows.length, importedAt });
   } catch (error) {
     return safeError(res, error);
   }

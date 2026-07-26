@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { collaborationFit, usernamesFromInstagramExport } from "./_instagram-collaborators.js";
+import { collaborationFit, followingRefreshDue, usernamesFromInstagramExport } from "./_instagram-collaborators.js";
 
 test("extracts and deduplicates usernames from an Instagram following export", () => {
   const result = usernamesFromInstagramExport({
@@ -19,4 +19,11 @@ test("scores a relevant collaboration profile above a generic profile", () => {
   const generic = collaborationFit({ biography: "Landscape photographs", followers_count: 900000 });
   assert.ok(relevant.fit_score > generic.fit_score);
   assert.equal(relevant.fit_label, "Excellent");
+});
+
+test("following refresh reminder becomes due every three days", () => {
+  const now = Date.parse("2026-07-25T18:00:00Z");
+  assert.equal(followingRefreshDue(null, now), true);
+  assert.equal(followingRefreshDue("2026-07-23T18:00:01Z", now), false);
+  assert.equal(followingRefreshDue("2026-07-22T18:00:00Z", now), true);
 });

@@ -26,6 +26,9 @@ async function syncForUser(userId, config) {
   const connection = (await connectionResponse.json())[0];
   if (!connection) throw new Error("Connect Instagram before refreshing insights.");
   const token = decryptToken(connection.access_token_encrypted, config.encryptionKey);
+  const profile = await graph(connection.instagram_account_id, token, config, {
+    fields: "username,followers_count,media_count",
+  });
   const media = [];
   let next = `${connection.instagram_account_id}/media`;
   let params = {
@@ -111,7 +114,13 @@ async function syncForUser(userId, config) {
   await fetch(`${config.supabaseUrl}/rest/v1/instagram_connections?id=eq.${encodeURIComponent(connection.id)}`, {
     method: "PATCH",
     headers: serviceHeaders(config),
-    body: JSON.stringify({ last_synced_at: new Date().toISOString(), last_sync_error: null }),
+    body: JSON.stringify({
+      instagram_username: profile.username || connection.instagram_username,
+      followers_count: Number(profile.followers_count || 0),
+      media_count: Number(profile.media_count || 0),
+      last_synced_at: new Date().toISOString(),
+      last_sync_error: null,
+    }),
   });
   return { imported: media.length, matched };
 }
