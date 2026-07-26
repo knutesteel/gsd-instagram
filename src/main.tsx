@@ -541,11 +541,23 @@ type InstagramPost = {
   engagement_rate: number;
 };
 
+type InstagramSortField =
+  | "post"
+  | "views"
+  | "reach"
+  | "like_count"
+  | "comments_count"
+  | "saved"
+  | "shares"
+  | "engagement_rate";
+
 function InstagramInsights({ notify }: { notify: Notify }) {
   const [connection, setConnection] = useState<InstagramConnection | null>(null);
   const [posts, setPosts] = useState<InstagramPost[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [sortField, setSortField] = useState<InstagramSortField>("post");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   const load = async () => {
     if (!supabase) return;
@@ -631,6 +643,39 @@ function InstagramInsights({ notify }: { notify: Notify }) {
   const totalInteractions = sum("total_interactions") || posts.reduce((total, post) =>
     total + Number(post.like_count || 0) + Number(post.comments_count || 0) + Number(post.saved || 0) + Number(post.shares || 0), 0);
   const overallEngagement = totalReach ? ((totalInteractions / totalReach) * 100).toFixed(2) : "0.00";
+  const sortedPosts = useMemo(() => [...posts].sort((a, b) => {
+    let comparison = 0;
+    if (sortField === "post") {
+      comparison = (a.posted_at ? new Date(a.posted_at).getTime() : 0) - (b.posted_at ? new Date(b.posted_at).getTime() : 0);
+      if (!comparison) comparison = a.caption.localeCompare(b.caption);
+    } else {
+      comparison = Number(a[sortField] || 0) - Number(b[sortField] || 0);
+    }
+    if (!comparison) comparison = a.id.localeCompare(b.id);
+    return sortDirection === "asc" ? comparison : -comparison;
+  }), [posts, sortDirection, sortField]);
+
+  const changeSort = (field: InstagramSortField) => {
+    if (field === sortField) {
+      setSortDirection((current) => current === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSortField(field);
+    setSortDirection("desc");
+  };
+
+  const SortHeader = ({ field, children }: { field: InstagramSortField; children: React.ReactNode }) => {
+    const active = sortField === field;
+    return <button
+      type="button"
+      className={`instagram-sort-header${active ? " active" : ""}`}
+      onClick={() => changeSort(field)}
+      aria-label={`Sort by ${String(children)} ${active && sortDirection === "desc" ? "ascending" : "descending"}`}
+    >
+      <span>{children}</span>
+      <span className="instagram-sort-indicator" aria-hidden="true">{active ? (sortDirection === "asc" ? "▲" : "▼") : "↕"}</span>
+    </button>;
+  };
 
   return <section>
     <header className="page-header">
@@ -662,9 +707,18 @@ function InstagramInsights({ notify }: { notify: Notify }) {
         <InsightMetric label="Engagement rate" value={`${overallEngagement}%`} />
       </div>
       <div className="instagram-post-table">
-        <div className="instagram-post-head"><span>Post</span><span>Views</span><span>Reach</span><span>Likes</span><span>Comments</span><span>Saves</span><span>Shares</span><span>Engagement</span></div>
+        <div className="instagram-post-head">
+          <SortHeader field="post">Post</SortHeader>
+          <SortHeader field="views">Views</SortHeader>
+          <SortHeader field="reach">Reach</SortHeader>
+          <SortHeader field="like_count">Likes</SortHeader>
+          <SortHeader field="comments_count">Comments</SortHeader>
+          <SortHeader field="saved">Saves</SortHeader>
+          <SortHeader field="shares">Shares</SortHeader>
+          <SortHeader field="engagement_rate">Engagement</SortHeader>
+        </div>
         {!posts.length && <div className="empty-queue"><FiBarChart2 /><h2>No posts collected yet</h2><p>Select Refresh insights to import your recent Instagram posts.</p></div>}
-        {posts.map((post) => <div className="instagram-post-row" key={post.id}>
+        {sortedPosts.map((post) => <div className="instagram-post-row" key={post.id}>
           <div className="instagram-post-summary">
             {post.thumbnail_url || post.media_url ? <img src={post.thumbnail_url || post.media_url || ""} alt="" /> : <span className="instagram-post-placeholder"><FiBarChart2 /></span>}
             <div>
