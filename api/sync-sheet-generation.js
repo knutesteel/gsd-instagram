@@ -50,6 +50,19 @@ export const uniqueNumericSheetRows = (rows) => {
   for (const identifier of duplicates) byIdentifier.delete(identifier);
   return { rows: [...byIdentifier.values()], duplicateIdentifiers: [...duplicates] };
 };
+export const isScheduledSyncRequest = (req, cronSecret = process.env.CRON_SECRET) => {
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
+  return Boolean(cronSecret && token === cronSecret);
+};
+export const uniqueSheetOwner = (articles) => {
+  const userIds = [...new Set((articles || []).map((article) => article.user_id).filter(Boolean))];
+  if (userIds.length !== 1) {
+    throw new Error(userIds.length
+      ? "Scheduled sheet synchronization requires one unambiguous sheet owner."
+      : "Scheduled sheet synchronization could not find a sheet owner.");
+  }
+  return userIds[0];
+};
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -138,13 +151,31 @@ async function restoreMissingSheetRows({ rows, accessToken, supabaseUrl, headers
   return missing.map((article) => article.generation_identifier);
 }
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+  const scheduled = req.method === "GET" && isScheduledSyncRequest(req);
+  if (req.method !== "POST" && !scheduled) return res.status(405).json({ error: "Method not allowed" });
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  const supabaseUrl = process.env.VITE_SUPABASE_URL; const key = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const supabaseUrl = process.env.VITE_SUPABASE_URL;
+  const publicKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = scheduled ? serviceKey : publicKey;
   if (!token || !supabaseUrl || !key) return res.status(500).json({ error: "Server configuration is incomplete." });
   const headers = { apikey: key, Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-  const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, { headers }); if (!userResponse.ok) return res.status(401).json({ error: "Sign in required." });
-  const user = await userResponse.json();
+  let user;
+  if (scheduled) {
+    const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
+    const ownersResponse = await fetch(`${supabaseUrl}/rest/v1/articles?generation_identifier=not.is.null&select=user_id`, { headers: serviceHeaders });
+    if (!ownersResponse.ok) return res.status(502).json({ error: "Couldn’t resolve the generation sheet owner." });
+    try {
+      user = { id: uniqueSheetOwner(await ownersResponse.json()) };
+    } catch (error) {
+      return res.status(409).json({ error: error instanceof Error ? error.message : "Couldn’t resolve the generation sheet owner." });
+    }
+    Object.assign(headers, serviceHeaders);
+  } else {
+    const userResponse = await fetch(`${supabaseUrl}/auth/v1/user`, { headers });
+    if (!userResponse.ok) return res.status(401).json({ error: "Sign in required." });
+    user = await userResponse.json();
+  }
   try {
     const accessToken = await googleToken();
     const sheet = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
@@ -328,6 +359,6 @@ export default async function handler(req, res) {
     } catch (error) {
       restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
     }
-    return res.status(200).json({ updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning, syncErrors });
+    return res.status(200).json({ scheduled, updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning, syncErrors });
   } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
 }
