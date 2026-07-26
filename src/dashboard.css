@@ -274,39 +274,67 @@
 .instagram-export-dialog code { padding: 2px 5px; border-radius: 4px; background: #f2eee6; color: #425036; overflow-wrap: anywhere; }
 .instagram-export-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
 .instagram-collaboration-note { margin-bottom: 14px; padding: 12px 15px; border: 1px solid #dfe4d5; border-radius: 9px; background: #eef2e8; color: #526047; font-size: 13px; }
+.instagram-collaboration-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.instagram-collaboration-controls label { display: flex; align-items: center; gap: 8px; color: #625f57; font-size: 13px; font-weight: 700; }
+.instagram-collaboration-controls select { min-height: 38px; padding: 0 34px 0 11px; border: 1px solid #d9d3c8; border-radius: 8px; background: #fff; color: #2c3028; }
+.instagram-bulk-actions { display: flex; align-items: center; gap: 9px; }
+.instagram-bulk-actions > span { color: #777168; font-size: 12px; font-weight: 700; }
 .instagram-following-reminder { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 14px; padding: 15px 16px; border: 1px solid #e2c887; border-radius: 11px; background: #fff7df; color: #5f512f; }
 .instagram-following-reminder > div { display: flex; align-items: center; gap: 12px; }
 .instagram-following-reminder > div > svg { flex: 0 0 auto; font-size: 22px; }
 .instagram-following-reminder span { display: grid; gap: 3px; }
 .instagram-following-reminder small { color: #776942; line-height: 1.35; }
 .instagram-collaboration-table { overflow: hidden; border: 1px solid #e5dfd4; border-radius: 14px; background: #fff; }
-.instagram-collaboration-head, .instagram-collaboration-row { display: grid; grid-template-columns: minmax(230px, 1.1fr) minmax(100px, .45fr) minmax(125px, .55fr) minmax(320px, 1.8fr); gap: 18px; align-items: center; padding: 14px 18px; }
+.instagram-collaboration-head, .instagram-collaboration-row { display: grid; grid-template-columns: 24px minmax(230px, 1.2fr) minmax(100px, .45fr) minmax(125px, .55fr) minmax(125px, .6fr) 32px; gap: 14px; align-items: center; padding: 14px 18px; }
 .instagram-collaboration-head { border-bottom: 1px solid #e5dfd4; color: #777168; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
-.instagram-collaboration-row { border-bottom: 1px solid #eee9df; font-size: 13px; }
-.instagram-collaboration-row:last-child { border-bottom: 0; }
+.instagram-collaboration-record { border-bottom: 1px solid #eee9df; }
+.instagram-collaboration-record:last-child { border-bottom: 0; }
+.instagram-collaboration-row { font-size: 13px; }
+.instagram-collaboration-record.expanded { background: #fffdf8; }
 .instagram-prospect { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.instagram-prospect-button { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .instagram-prospect img, .instagram-prospect-avatar { width: 44px; height: 44px; flex: 0 0 auto; border-radius: 50%; object-fit: cover; background: #eef0e5; }
 .instagram-prospect-avatar { display: grid; place-items: center; color: #627150; }
-.instagram-prospect div { display: grid; gap: 3px; min-width: 0; }
-.instagram-prospect a { overflow: hidden; color: #2c3028; font-weight: 700; text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+.instagram-prospect > span { display: grid; gap: 3px; min-width: 0; }
+.instagram-prospect b { overflow: hidden; color: #2c3028; text-overflow: ellipsis; white-space: nowrap; }
 .instagram-prospect small { overflow: hidden; color: #777168; text-overflow: ellipsis; white-space: nowrap; }
 .fit-badge { width: fit-content; padding: 5px 8px; border-radius: 999px; background: #eeeae2; color: #625f57; font-size: 11px; font-weight: 800; }
 .fit-excellent { background: #dcebd6; color: #385732; }
 .fit-strong { background: #e6edd9; color: #4f623c; }
 .fit-possible { background: #f5ead0; color: #765d28; }
 .fit-analysis { color: #625f57; line-height: 1.45; }
+.collaboration-status { width: fit-content; padding: 5px 8px; border-radius: 999px; background: #f1eee8; color: #625f57; font-size: 11px; font-weight: 800; }
+.status-reached_out { background: #e6edf3; color: #39586d; }
+.status-in_discussions { background: #f5ead0; color: #765d28; }
+.status-in_place { background: #dcebd6; color: #385732; }
+.status-archived { background: #ece9e4; color: #777168; }
+.instagram-expand-button { display: grid; width: 30px; height: 30px; place-items: center; border: 0; border-radius: 7px; background: transparent; color: #6f6a61; cursor: pointer; }
+.instagram-collaboration-record.expanded .instagram-expand-button svg { transform: rotate(180deg); }
+.instagram-expand-button svg { transition: transform .18s ease; }
+.instagram-collaboration-details { padding: 0 18px 22px 56px; }
+.instagram-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding-top: 3px; }
+.instagram-detail-heading h3 { margin: 0 0 5px; font-family: "Playfair Display", serif; font-size: 22px; }
+.instagram-detail-heading p { margin: 0; max-width: 780px; color: #625f57; line-height: 1.5; }
+.instagram-research-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+.instagram-research-grid article { padding: 15px; border: 1px solid #e4ded3; border-radius: 10px; background: #fff; }
+.instagram-research-grid h4 { margin: 0 0 7px; color: #4e5e3f; font-size: 12px; letter-spacing: .35px; text-transform: uppercase; }
+.instagram-research-grid p { margin: 0; color: #4a4d46; font-size: 13px; line-height: 1.55; }
+.instagram-researched-at { display: block; margin-top: 11px; color: #8a847a; }
 @media (max-width: 1100px) {
   .insights-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .instagram-post-table { overflow-x: auto; }
   .instagram-post-head, .instagram-post-row { min-width: 1050px; }
   .instagram-collaboration-table { overflow-x: auto; }
-  .instagram-collaboration-head, .instagram-collaboration-row { min-width: 900px; }
+  .instagram-collaboration-head, .instagram-collaboration-row { min-width: 880px; }
 }
 @media (max-width: 760px) {
   .instagram-export-dialog { padding: 28px 22px 24px; }
   .instagram-export-actions { align-items: stretch; flex-direction: column; }
   .instagram-export-actions .button { justify-content: center; }
   .instagram-following-reminder { align-items: stretch; flex-direction: column; }
+  .instagram-collaboration-controls, .instagram-bulk-actions, .instagram-detail-heading { align-items: stretch; flex-direction: column; }
+  .instagram-research-grid { grid-template-columns: 1fr; }
+  .instagram-collaboration-details { padding-left: 18px; }
   .insights-metrics { grid-template-columns: 1fr 1fr; }
   .instagram-account-bar { align-items: flex-start; flex-direction: column; }
 }

@@ -573,6 +573,22 @@ type InstagramCollaborationProspect = {
   fit_label: string;
   fit_analysis: string;
   enriched_at: string | null;
+  collaboration_status: CollaborationStatus;
+  content_analysis: string;
+  brand_fit_analysis: string;
+  existing_collaborations: string;
+  recommended_outreach: string;
+  researched_at: string | null;
+};
+
+type CollaborationStatus = "explore" | "reached_out" | "in_discussions" | "in_place" | "archived";
+
+const COLLABORATION_STATUS_LABELS: Record<CollaborationStatus, string> = {
+  explore: "Explore",
+  reached_out: "Reached Out",
+  in_discussions: "In Discussions",
+  in_place: "In Place",
+  archived: "Archived",
 };
 
 function InstagramInsights({ notify }: { notify: Notify }) {
@@ -747,6 +763,28 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     }
   };
 
+  const updateCollaborationStatus = async (ids: string[], status: CollaborationStatus) => {
+    if (!supabase) return;
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/instagram-collaboration-status", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ids, status }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Couldn’t update the selected accounts.");
+    const changed = new Set(ids);
+    const applyStatus = (rows: InstagramCollaborationProspect[]) => rows.map((row) =>
+      changed.has(row.id) ? { ...row, collaboration_status: status } : row);
+    setProspects(applyStatus);
+    setFollowers(applyStatus);
+    notify(`Moved ${Number(result.updated || ids.length).toLocaleString()} account${ids.length === 1 ? "" : "s"} to ${COLLABORATION_STATUS_LABELS[status]}.`);
+  };
+
   const sum = (field: keyof Pick<InstagramPost, "views" | "reach" | "total_interactions" | "saved" | "shares">) =>
     posts.reduce((total, post) => total + Number(post[field] || 0), 0);
   const totalReach = sum("reach");
@@ -817,7 +855,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
       <h2>Connect @hankandthesquirrel</h2>
       <p>Authorize the Facebook Page connected to your Instagram Business account. Meta credentials remain server-side.</p>
       <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>
-    </div> : tab === "following" ? <InstagramCollaborationTab relationshipType="following" prospects={prospects} lastImportedAt={connection.last_following_import_at} onImport={() => followingFileRef.current?.click()} importing={importing} /> : tab === "followers" ? <InstagramCollaborationTab relationshipType="followers" prospects={followers} lastImportedAt={connection.last_followers_import_at} onImport={() => followersFileRef.current?.click()} importing={importing} /> : <>
+    </div> : tab === "following" ? <InstagramCollaborationTab relationshipType="following" prospects={prospects} lastImportedAt={connection.last_following_import_at} onImport={() => followingFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : tab === "followers" ? <InstagramCollaborationTab relationshipType="followers" prospects={followers} lastImportedAt={connection.last_followers_import_at} onImport={() => followersFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : <>
       <div className="instagram-account-bar">
         <div><b>@{connection.instagram_username || "Instagram account"}</b><span>{connection.facebook_page_name || "Connected Facebook Page"}</span></div>
         <span>{connection.last_synced_at ? `Last refreshed ${new Date(connection.last_synced_at).toLocaleString()}` : "Ready for first refresh"}</span>
@@ -890,15 +928,27 @@ function InstagramExportInstructions({ onClose }: { onClose: () => void }) {
   </div>;
 }
 
-function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt, onImport, importing }: { relationshipType: "following" | "followers"; prospects: InstagramCollaborationProspect[]; lastImportedAt: string | null; onImport: () => void; importing: boolean }) {
+function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt, onImport, importing, onStatusChange, notify }: { relationshipType: "following" | "followers"; prospects: InstagramCollaborationProspect[]; lastImportedAt: string | null; onImport: () => void; importing: boolean; onStatusChange: (ids: string[], status: CollaborationStatus) => Promise<void>; notify: Notify }) {
   const [sort, setSort] = useState<"username" | "followers_count" | "fit_score">("fit_score");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
-  const sorted = useMemo(() => [...prospects].sort((a, b) => {
+  const [statusFilter, setStatusFilter] = useState<CollaborationStatus | "all">("all");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [bulkStatus, setBulkStatus] = useState<CollaborationStatus>("explore");
+  const [updating, setUpdating] = useState(false);
+  const visibleProspects = useMemo(() => statusFilter === "all"
+    ? prospects
+    : prospects.filter((prospect) => (prospect.collaboration_status || "explore") === statusFilter), [prospects, statusFilter]);
+  const sorted = useMemo(() => [...visibleProspects].sort((a, b) => {
     const comparison = sort === "username"
       ? a.username.localeCompare(b.username)
       : Number(a[sort] ?? -1) - Number(b[sort] ?? -1);
     return direction === "asc" ? comparison : -comparison;
-  }), [direction, prospects, sort]);
+  }), [direction, sort, visibleProspects]);
+  useEffect(() => {
+    const available = new Set(prospects.map((prospect) => prospect.id));
+    setSelected((current) => new Set([...current].filter((id) => available.has(id))));
+  }, [prospects]);
   const changeSort = (field: typeof sort) => {
     if (field === sort) setDirection((value) => value === "asc" ? "desc" : "asc");
     else {
@@ -909,6 +959,31 @@ function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt
   const Header = ({ field, children }: { field: typeof sort; children: React.ReactNode }) => <button type="button" className={`instagram-sort-header${sort === field ? " active" : ""}`} onClick={() => changeSort(field)}>
     <span>{children}</span><span className="instagram-sort-indicator">{sort === field ? (direction === "asc" ? "▲" : "▼") : "↕"}</span>
   </button>;
+  const toggleSelected = (id: string) => setSelected((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const toggleExpanded = (id: string) => setExpanded((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    return next;
+  });
+  const allVisibleSelected = sorted.length > 0 && sorted.every((prospect) => selected.has(prospect.id));
+  const applyBulkStatus = async () => {
+    if (!selected.size) return;
+    setUpdating(true);
+    try {
+      await onStatusChange([...selected], bulkStatus);
+      setSelected(new Set());
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Couldn’t update the selected accounts.", "error");
+    } finally {
+      setUpdating(false);
+    }
+  };
   if (!prospects.length) return <div className="panel instagram-following-empty">
     <FiUsers />
     <h2>Import {relationshipType === "followers" ? "your followers" : "the accounts you follow"}</h2>
@@ -921,22 +996,58 @@ function InstagramCollaborationTab({ relationshipType, prospects, lastImportedAt
       <div><FiRefreshCw /><span><strong>Time to update your {relationshipType}</strong><small>Import a fresh Instagram {relationshipType} HTML file. This reminder appears every three days after your last update.</small></span></div>
       <button className="button primary" disabled={importing} onClick={onImport}><FiUpload /> {importing ? "Importing…" : "Update now"}</button>
     </div>}
-    <div className="instagram-collaboration-note">Showing {prospects.length.toLocaleString()} {relationshipType === "followers" ? "followers" : "followed accounts"}. Follower totals are available only where Meta exposes a professional profile.</div>
+    <div className="instagram-collaboration-note">Showing {visibleProspects.length.toLocaleString()} of {prospects.length.toLocaleString()} {relationshipType === "followers" ? "followers" : "followed accounts"}. Select an account to open its content review, Hank and the Squirrel fit, collaboration evidence, and recommended outreach.</div>
+    <div className="instagram-collaboration-controls">
+      <label>Status <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as CollaborationStatus | "all")}>
+        <option value="all">All statuses</option>
+        {Object.entries(COLLABORATION_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select></label>
+      <div className="instagram-bulk-actions">
+        <span>{selected.size.toLocaleString()} selected</span>
+        <select aria-label="New status for selected accounts" value={bulkStatus} onChange={(event) => setBulkStatus(event.target.value as CollaborationStatus)}>
+          {Object.entries(COLLABORATION_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+        <button className="button primary" disabled={!selected.size || updating} onClick={() => void applyBulkStatus()}>{updating ? "Updating…" : "Change status"}</button>
+      </div>
+    </div>
     <div className="instagram-collaboration-table">
       <div className="instagram-collaboration-head">
+        <input type="checkbox" aria-label="Select all visible accounts" checked={allVisibleSelected} onChange={(event) => setSelected((current) => {
+          const next = new Set(current);
+          sorted.forEach((prospect) => event.target.checked ? next.add(prospect.id) : next.delete(prospect.id));
+          return next;
+        })} />
         <Header field="username">Account</Header>
         <Header field="followers_count">Followers</Header>
         <Header field="fit_score">Fit</Header>
-        <span>Collaboration analysis</span>
+        <span>Status</span>
+        <span aria-hidden="true" />
       </div>
-      {sorted.map((prospect) => <div className="instagram-collaboration-row" key={prospect.id}>
-        <div className="instagram-prospect">
-          {prospect.profile_picture_url ? <img src={prospect.profile_picture_url} alt="" /> : <span className="instagram-prospect-avatar"><FiUsers /></span>}
-          <div><a href={prospect.profile_url || `https://www.instagram.com/${prospect.username}/`} target="_blank" rel="noreferrer">@{prospect.username} <FiExternalLink /></a>{prospect.display_name && <small>{prospect.display_name}</small>}</div>
+      {sorted.map((prospect) => <div className={`instagram-collaboration-record${expanded.has(prospect.id) ? " expanded" : ""}`} key={prospect.id}>
+        <div className="instagram-collaboration-row">
+          <input type="checkbox" aria-label={`Select @${prospect.username}`} checked={selected.has(prospect.id)} onChange={() => toggleSelected(prospect.id)} />
+          <button className="instagram-prospect instagram-prospect-button" type="button" aria-expanded={expanded.has(prospect.id)} onClick={() => toggleExpanded(prospect.id)}>
+            {prospect.profile_picture_url ? <img src={prospect.profile_picture_url} alt="" /> : <span className="instagram-prospect-avatar"><FiUsers /></span>}
+            <span><b>@{prospect.username}</b>{prospect.display_name && <small>{prospect.display_name}</small>}</span>
+          </button>
+          <span>{prospect.profile_data_available && prospect.followers_count !== null ? Number(prospect.followers_count).toLocaleString() : "Unavailable"}</span>
+          <span className={`fit-badge fit-${prospect.fit_label.toLowerCase()}`}>{prospect.fit_label} · {prospect.fit_score}</span>
+          <span className={`collaboration-status status-${prospect.collaboration_status || "explore"}`}>{COLLABORATION_STATUS_LABELS[prospect.collaboration_status || "explore"]}</span>
+          <button type="button" className="instagram-expand-button" aria-label={`${expanded.has(prospect.id) ? "Collapse" : "Expand"} @${prospect.username}`} onClick={() => toggleExpanded(prospect.id)}><FiChevronDown /></button>
         </div>
-        <span>{prospect.profile_data_available && prospect.followers_count !== null ? Number(prospect.followers_count).toLocaleString() : "Unavailable"}</span>
-        <span className={`fit-badge fit-${prospect.fit_label.toLowerCase()}`}>{prospect.fit_label} · {prospect.fit_score}</span>
-        <span className="fit-analysis">{prospect.fit_analysis}</span>
+        {expanded.has(prospect.id) && <div className="instagram-collaboration-details">
+          <div className="instagram-detail-heading">
+            <div><h3>@{prospect.username}</h3><p>{prospect.biography || "No biography available."}</p></div>
+            <a className="button" href={prospect.profile_url || `https://www.instagram.com/${prospect.username}/`} target="_blank" rel="noreferrer">Open Instagram <FiExternalLink /></a>
+          </div>
+          <div className="instagram-research-grid">
+            <article><h4>Content review</h4><p>{prospect.content_analysis || "Detailed content review is pending."}</p></article>
+            <article><h4>Fit with Hank and the Squirrel</h4><p>{prospect.brand_fit_analysis || prospect.fit_analysis}</p></article>
+            <article><h4>Existing collaborations</h4><p>{prospect.existing_collaborations || "No visible collaboration evidence recorded yet."}</p></article>
+            <article><h4>Recommended outreach</h4><p>{prospect.recommended_outreach || "Review recent posts before choosing a personalized outreach angle."}</p></article>
+          </div>
+          <small className="instagram-researched-at">{prospect.researched_at ? `Profile reviewed ${new Date(prospect.researched_at).toLocaleDateString()}` : "Deep profile review pending"}</small>
+        </div>}
       </div>)}
     </div>
   </>;
