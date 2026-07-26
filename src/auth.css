@@ -1,0 +1,26 @@
+.auth-code-input {
+  text-align: center;
+  letter-spacing: 0.45em;
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.auth-code-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 14px 2px 0;
+}
+
+.auth-code-actions button {
+  color: #52612e;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-size: 13px;
+}
+
+.auth-code-actions button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
