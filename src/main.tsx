@@ -20,6 +20,8 @@ import {
   FiSearch,
   FiStar,
   FiTrash2,
+  FiUpload,
+  FiUsers,
   FiX,
 } from "react-icons/fi";
 import "./styles.css";
@@ -551,20 +553,41 @@ type InstagramSortField =
   | "shares"
   | "engagement_rate";
 
+type InstagramCollaborationProspect = {
+  id: string;
+  username: string;
+  display_name: string | null;
+  biography: string | null;
+  profile_url: string | null;
+  profile_picture_url: string | null;
+  followers_count: number | null;
+  profile_data_available: boolean;
+  fit_score: number;
+  fit_label: string;
+  fit_analysis: string;
+  enriched_at: string | null;
+};
+
 function InstagramInsights({ notify }: { notify: Notify }) {
+  const [tab, setTab] = useState<"performance" | "collaborations">("performance");
   const [connection, setConnection] = useState<InstagramConnection | null>(null);
   const [posts, setPosts] = useState<InstagramPost[]>([]);
+  const [prospects, setProspects] = useState<InstagramCollaborationProspect[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [enriching, setEnriching] = useState(false);
+  const followingFileRef = useRef<HTMLInputElement>(null);
   const [sortField, setSortField] = useState<InstagramSortField>("post");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   const load = async () => {
     if (!supabase) return;
     setLoading(true);
-    const [connectionResult, postsResult] = await Promise.all([
+    const [connectionResult, postsResult, prospectsResult] = await Promise.all([
       supabase.from("instagram_connections").select("instagram_username,facebook_page_name,last_synced_at,token_expires_at").maybeSingle(),
       supabase.from("instagram_media").select("id,article_id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,published_at,like_count,comments_count,instagram_media_insights(captured_on,views,reach,saved,shares,total_interactions,raw_metrics)").order("published_at", { ascending: false }).limit(500),
+      supabase.from("instagram_following").select("id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at").order("fit_score", { ascending: false }).limit(7500),
     ]);
     if (connectionResult.error) {
       if (!/does not exist|schema cache/i.test(connectionResult.error.message)) throw connectionResult.error;
@@ -587,6 +610,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
         engagement_rate: Number(raw.engagement_rate ?? (reach ? (interactions / reach) * 100 : 0)),
       };
     }) as InstagramPost[]);
+    if (!prospectsResult.error) setProspects((prospectsResult.data ?? []) as InstagramCollaborationProspect[]);
     setLoading(false);
   };
 
@@ -637,6 +661,63 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     }
   };
 
+  const enrichFollowing = async () => {
+    if (!supabase) return;
+    setEnriching(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("Please sign in again.");
+      let remaining = 1;
+      let processed = 0;
+      let enriched = 0;
+      while (remaining > 0) {
+        const response = await fetch("/api/instagram-following-enrich", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${data.session.access_token}` },
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || "Couldn’t refresh collaboration profiles.");
+        processed += Number(result.processed || 0);
+        enriched += Number(result.enriched || 0);
+        remaining = Number(result.remaining || 0);
+        if (!result.processed) break;
+      }
+      await load();
+      notify(`Reviewed ${processed} followed accounts; Meta supplied follower data for ${enriched} professional profiles.`);
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  const importFollowing = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !supabase) return;
+    setImporting(true);
+    try {
+      const exportData = JSON.parse(await file.text());
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) throw new Error("Please sign in again.");
+      const response = await fetch("/api/instagram-following-import", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${data.session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(exportData),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Couldn’t import the Instagram following list.");
+      await load();
+      notify(`Imported ${result.imported} followed accounts. Refreshing available professional-profile data now.`);
+      await enrichFollowing();
+    } catch (error) {
+      notify(error instanceof SyntaxError ? "Choose the JSON version of Instagram’s following export." : error instanceof Error ? error.message : "Couldn’t import the Instagram export.", "error");
+    } finally {
+      setImporting(false);
+    }
+  };
+
   const sum = (field: keyof Pick<InstagramPost, "views" | "reach" | "total_interactions" | "saved" | "shares">) =>
     posts.reduce((total, post) => total + Number(post[field] || 0), 0);
   const totalReach = sum("reach");
@@ -681,20 +762,29 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     <header className="page-header">
       <div>
         <h1>Instagram Insights</h1>
-        <p>Post views, reach, engagement, and performance for your connected business account.</p>
+        <p>{tab === "performance" ? "Post views, reach, engagement, and performance for your connected business account." : "Accounts you follow, audience size, and collaboration fit for Hank and the Squirrel."}</p>
       </div>
       <div className="page-actions">
-        {connection
+        {connection && tab === "collaborations" && <>
+          <input ref={followingFileRef} type="file" accept=".json,application/json" hidden onChange={(event) => void importFollowing(event)} />
+          <button className="button" disabled={importing || enriching} onClick={() => followingFileRef.current?.click()}><FiUpload /> {importing ? "Importing…" : "Import following JSON"}</button>
+          {!!prospects.length && <button className="button primary" disabled={enriching || importing} onClick={() => void enrichFollowing().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t refresh profiles.", "error"))}><FiRefreshCw className={enriching ? "spin" : ""} /> {enriching ? "Analyzing…" : "Refresh profiles"}</button>}
+        </>}
+        {tab === "performance" && (connection
           ? <button className="button primary" disabled={syncing} onClick={() => void sync().catch((error) => notify(error instanceof Error ? error.message : "Instagram refresh failed.", "error"))}><FiRefreshCw className={syncing ? "spin" : ""} /> {syncing ? "Refreshing…" : "Refresh insights"}</button>
-          : <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>}
+          : <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>)}
       </div>
     </header>
+    <div className="instagram-tabs" role="tablist" aria-label="Instagram insight views">
+      <button type="button" role="tab" aria-selected={tab === "performance"} className={tab === "performance" ? "active" : ""} onClick={() => setTab("performance")}><FiBarChart2 /> Post performance</button>
+      <button type="button" role="tab" aria-selected={tab === "collaborations"} className={tab === "collaborations" ? "active" : ""} onClick={() => setTab("collaborations")}><FiUsers /> Collaboration fit</button>
+    </div>
     {loading ? <div className="panel">Loading Instagram insights…</div> : !connection ? <div className="panel instagram-connect-card">
       <FiBarChart2 />
       <h2>Connect @hankandthesquirrel</h2>
       <p>Authorize the Facebook Page connected to your Instagram Business account. Meta credentials remain server-side.</p>
       <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>
-    </div> : <>
+    </div> : tab === "collaborations" ? <InstagramCollaborationTab prospects={prospects} onImport={() => followingFileRef.current?.click()} importing={importing} /> : <>
       <div className="instagram-account-bar">
         <div><b>@{connection.instagram_username || "Instagram account"}</b><span>{connection.facebook_page_name || "Connected Facebook Page"}</span></div>
         <span>{connection.last_synced_at ? `Last refreshed ${new Date(connection.last_synced_at).toLocaleString()}` : "Ready for first refresh"}</span>
@@ -731,6 +821,53 @@ function InstagramInsights({ notify }: { notify: Notify }) {
       </div>
     </>}
   </section>;
+}
+
+function InstagramCollaborationTab({ prospects, onImport, importing }: { prospects: InstagramCollaborationProspect[]; onImport: () => void; importing: boolean }) {
+  const [sort, setSort] = useState<"username" | "followers_count" | "fit_score">("fit_score");
+  const [direction, setDirection] = useState<"asc" | "desc">("desc");
+  const sorted = useMemo(() => [...prospects].sort((a, b) => {
+    const comparison = sort === "username"
+      ? a.username.localeCompare(b.username)
+      : Number(a[sort] ?? -1) - Number(b[sort] ?? -1);
+    return direction === "asc" ? comparison : -comparison;
+  }), [direction, prospects, sort]);
+  const changeSort = (field: typeof sort) => {
+    if (field === sort) setDirection((value) => value === "asc" ? "desc" : "asc");
+    else {
+      setSort(field);
+      setDirection(field === "username" ? "asc" : "desc");
+    }
+  };
+  const Header = ({ field, children }: { field: typeof sort; children: React.ReactNode }) => <button type="button" className={`instagram-sort-header${sort === field ? " active" : ""}`} onClick={() => changeSort(field)}>
+    <span>{children}</span><span className="instagram-sort-indicator">{sort === field ? (direction === "asc" ? "▲" : "▼") : "↕"}</span>
+  </button>;
+  if (!prospects.length) return <div className="panel instagram-following-empty">
+    <FiUsers />
+    <h2>Import the accounts you follow</h2>
+    <p>Instagram’s API does not provide a following list. Download your Instagram information in JSON format, then upload the <code>following.json</code> file here. Professional profiles will be enriched with follower totals; personal and private profiles will be marked unavailable.</p>
+    <button className="button primary" disabled={importing} onClick={onImport}><FiUpload /> {importing ? "Importing…" : "Import following JSON"}</button>
+  </div>;
+  return <>
+    <div className="instagram-collaboration-note">Showing {prospects.length.toLocaleString()} followed accounts. Follower totals are available only where Meta exposes a professional profile.</div>
+    <div className="instagram-collaboration-table">
+      <div className="instagram-collaboration-head">
+        <Header field="username">Account</Header>
+        <Header field="followers_count">Followers</Header>
+        <Header field="fit_score">Fit</Header>
+        <span>Collaboration analysis</span>
+      </div>
+      {sorted.map((prospect) => <div className="instagram-collaboration-row" key={prospect.id}>
+        <div className="instagram-prospect">
+          {prospect.profile_picture_url ? <img src={prospect.profile_picture_url} alt="" /> : <span className="instagram-prospect-avatar"><FiUsers /></span>}
+          <div><a href={prospect.profile_url || `https://www.instagram.com/${prospect.username}/`} target="_blank" rel="noreferrer">@{prospect.username} <FiExternalLink /></a>{prospect.display_name && <small>{prospect.display_name}</small>}</div>
+        </div>
+        <span>{prospect.profile_data_available && prospect.followers_count !== null ? Number(prospect.followers_count).toLocaleString() : "Unavailable"}</span>
+        <span className={`fit-badge fit-${prospect.fit_label.toLowerCase()}`}>{prospect.fit_label} · {prospect.fit_score}</span>
+        <span className="fit-analysis">{prospect.fit_analysis}</span>
+      </div>)}
+    </div>
+  </>;
 }
 
 function InsightMetric({ label, value }: { label: string; value: string }) {
