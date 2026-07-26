@@ -117,11 +117,14 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
 }
 
 function App() {
-  const [screen, setScreen] = useState<Screen>(() =>
-    new URLSearchParams(window.location.search).get("view") === "insights" ? "insights" : "dashboard"
-  );
+  const [screen, setScreen] = useState<Screen>(() => {
+    const view = new URLSearchParams(window.location.search).get("view");
+    return ["dashboard", "articles", "discover", "detail", "insights", "archive"].includes(String(view))
+      ? view as Screen
+      : "dashboard";
+  });
   const [items, setItems] = useState<Story[]>([]);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(() => new URLSearchParams(window.location.search).get("item") ?? "");
   const [query, setQuery] = useState("");
   const [articleStatusFilter, setArticleStatusFilter] = useState<"all" | Story["status"]>("all");
   const [searching, setSearching] = useState(false);
@@ -212,6 +215,15 @@ function App() {
     if (!supabase || !userId) return;
     void loadStories().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t load your queue."));
   }, [userId]);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (screen === "dashboard") params.delete("view");
+    else params.set("view", screen);
+    if (screen === "detail" && selected) params.set("item", selected);
+    else params.delete("item");
+    const queryString = params.toString();
+    window.history.replaceState(null, "", queryString ? `${window.location.pathname}?${queryString}` : window.location.pathname);
+  }, [screen, selected]);
   useEffect(() => {
     if (!supabase || !userId) return;
     const client = supabase;
@@ -1666,6 +1678,13 @@ function Detail({
     return operation;
   };
   const saveOnBlur = () => { if (dirtyRef.current) void save(true); };
+  useEffect(() => {
+    if (story.status !== "New" || !dirty) return;
+    const timer = window.setTimeout(() => {
+      if (dirtyRef.current) void save(true);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [values, dirty, story.id, story.status]);
   const navigateAfterSave = async (navigate: () => void) => {
     try {
       if (dirtyRef.current) await save(true);
@@ -1679,7 +1698,9 @@ function Detail({
   const send = async () => {
     setBusy("sheet");
     try {
-      const result = await sendForGeneration(story.id, values) as { warnings?: string[] };
+      if (dirtyRef.current) await save(true);
+      else await saveQueueRef.current;
+      const result = await sendForGeneration(story.id, valuesRef.current) as { warnings?: string[] };
       setPromptRepairRequired(false);
       setPromptReload((value) => value + 1);
       notify(result.warnings?.length ? `Article saved. ${result.warnings.join(" ")}` : "Article row and generation prompt verified in Google Sheets.", result.warnings?.length ? "error" : "success");
