@@ -285,7 +285,7 @@
 .instagram-following-reminder span { display: grid; gap: 3px; }
 .instagram-following-reminder small { color: #776942; line-height: 1.35; }
 .instagram-collaboration-table { overflow: hidden; border: 1px solid #e5dfd4; border-radius: 14px; background: #fff; }
-.instagram-collaboration-head, .instagram-collaboration-row { display: grid; grid-template-columns: 24px minmax(230px, 1.2fr) minmax(100px, .45fr) minmax(125px, .55fr) minmax(125px, .6fr) 32px; gap: 14px; align-items: center; padding: 14px 18px; }
+.instagram-collaboration-head, .instagram-collaboration-row { display: grid; grid-template-columns: 24px minmax(210px, 1.2fr) minmax(90px, .4fr) minmax(115px, .5fr) minmax(125px, .55fr) minmax(120px, .55fr) 32px; gap: 14px; align-items: center; padding: 14px 18px; }
 .instagram-collaboration-head { border-bottom: 1px solid #e5dfd4; color: #777168; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
 .instagram-collaboration-record { border-bottom: 1px solid #eee9df; }
 .instagram-collaboration-record:last-child { border-bottom: 0; }
@@ -304,6 +304,10 @@
 .fit-possible { background: #f5ead0; color: #765d28; }
 .fit-analysis { color: #625f57; line-height: 1.45; }
 .collaboration-status { width: fit-content; padding: 5px 8px; border-radius: 999px; background: #f1eee8; color: #625f57; font-size: 11px; font-weight: 800; }
+.analysis-status { width: fit-content; padding: 5px 8px; border-radius: 999px; background: #edf0e7; color: #526047; font-size: 11px; font-weight: 800; }
+.analysis-deep_review { background: #e3f2e6; color: #2f6a3f; }
+.analysis-unavailable { background: #f4e9e6; color: #8b493d; }
+.instagram-collaboration-filters { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .status-reached_out { background: #e6edf3; color: #39586d; }
 .status-in_discussions { background: #f5ead0; color: #765d28; }
 .status-in_place { background: #dcebd6; color: #385732; }

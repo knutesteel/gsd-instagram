@@ -26,7 +26,7 @@ export default async function handler(req, res) {
         config,
       ),
       fetchRows(
-        `${config.supabaseUrl}/rest/v1/instagram_following?user_id=eq.${userId}&select=id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at,relationship_type,collaboration_status,content_analysis,brand_fit_analysis,existing_collaborations,recommended_outreach,researched_at&order=fit_score.desc&limit=15000`,
+        `${config.supabaseUrl}/rest/v1/instagram_following?user_id=eq.${userId}&select=id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at,relationship_type,collaboration_status,analysis_status,content_analysis,brand_fit_analysis,existing_collaborations,recommended_outreach,researched_at&order=fit_score.desc&limit=15000`,
         config,
       ),
     ]);
