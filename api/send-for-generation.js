@@ -103,6 +103,15 @@ export function rowNumberFromUpdatedRange(updatedRange) {
   const row = match ? Number(match[1]) : NaN;
   return Number.isInteger(row) && row > 0 ? row : null;
 }
+export function easternSheetDate(date = new Date()) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
 export const generationPromptFormula = (row) => `="Create a "&G${row}&" "&H${row}&" Instagrage Post based on "&E${row}&" "&" with the following content: "&I${row}&" Create every output image at exactly 1080 pixels wide by 1440 pixels high (3:4 portrait), the default Instagram size. Use he GSD Voice, Image Guide, and ICP. Store the resulting images, description, and hashtags (maximum of 4) in the google sheet. In the generated Content field, place the hashtags immediately before the CTA. Use this sheet:
 https://docs.google.com/spreadsheets/d/1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ/edit?gid=0#gid=0, populating the relevant fields for the row with Identifyerer value of "&D${row}`;
 
@@ -218,7 +227,7 @@ export default async function handler(req, res) {
     const type = typeLabel(concept.post_type);
     const promptFormula = generationPromptFormula(intendedRow);
     const rowValues = [
-      new Date().toISOString().slice(0, 10),
+      easternSheetDate(),
       "Pending",
       article.title,
       Number(identifier),
