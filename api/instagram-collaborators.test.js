@@ -14,6 +14,18 @@ test("extracts and deduplicates usernames from an Instagram following export", (
   assert.match(result[0].followed_at, /^2023-/);
 });
 
+test("extracts and deduplicates usernames from Instagram HTML exports", () => {
+  const result = usernamesFromInstagramExport(`
+    <html><body>
+      <a href="https://www.instagram.com/bookhumor/">bookhumor</a>
+      <a href="https://www.instagram.com/_u/ADHD.author?utm_source=test">@ADHD.author</a>
+      <a href="https://www.instagram.com/bookhumor/">BookHumor</a>
+    </body></html>
+  `);
+  assert.deepEqual(result.map((row) => row.username), ["bookhumor", "ADHD.author"]);
+  assert.equal(result[1].profile_url, "https://www.instagram.com/ADHD.author/");
+});
+
 test("scores a relevant collaboration profile above a generic profile", () => {
   const relevant = collaborationFit({ biography: "ADHD author sharing productivity humor", followers_count: 12000 });
   const generic = collaborationFit({ biography: "Landscape photographs", followers_count: 900000 });

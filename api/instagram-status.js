@@ -18,7 +18,7 @@ export default async function handler(req, res) {
     const userId = encodeURIComponent(user.id);
     const [connections, posts, prospects] = await Promise.all([
       fetchRows(
-        `${config.supabaseUrl}/rest/v1/instagram_connections?user_id=eq.${userId}&select=instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at&limit=1`,
+        `${config.supabaseUrl}/rest/v1/instagram_connections?user_id=eq.${userId}&select=instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,last_followers_import_at,token_expires_at&limit=1`,
         config,
       ),
       fetchRows(
@@ -26,14 +26,16 @@ export default async function handler(req, res) {
         config,
       ),
       fetchRows(
-        `${config.supabaseUrl}/rest/v1/instagram_following?user_id=eq.${userId}&select=id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at&order=fit_score.desc&limit=7500`,
+        `${config.supabaseUrl}/rest/v1/instagram_following?user_id=eq.${userId}&select=id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at,relationship_type&order=fit_score.desc&limit=15000`,
         config,
       ),
     ]);
     return res.status(200).json({
       connection: connections[0] || null,
       posts,
-      prospects,
+      following: prospects.filter((row) => row.relationship_type !== "followers"),
+      followers: prospects.filter((row) => row.relationship_type === "followers"),
+      prospects: prospects.filter((row) => row.relationship_type !== "followers"),
     });
   } catch (error) {
     return safeError(res, error);

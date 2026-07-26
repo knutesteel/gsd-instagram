@@ -17,6 +17,23 @@ const FIT_TERMS = [
 
 export function usernamesFromInstagramExport(value) {
   const found = new Map();
+  if (typeof value === "string") {
+    const anchorPattern = /<a\b[^>]*href=(["'])(.*?)\1[^>]*>(.*?)<\/a>/gis;
+    let match;
+    while ((match = anchorPattern.exec(value)) !== null) {
+      const href = String(match[2] || "").replace(/&amp;/g, "&");
+      const text = String(match[3] || "").replace(/<[^>]+>/g, "").trim();
+      const hrefMatch = href.match(/instagram\.com\/(?:_u\/)?([A-Za-z0-9._]{1,30})(?:[/?#]|$)/i);
+      const username = (hrefMatch?.[1] || text).replace(/^@/, "").trim();
+      if (!/^[A-Za-z0-9._]{1,30}$/.test(username)) continue;
+      found.set(username.toLowerCase(), {
+        username,
+        followed_at: null,
+        profile_url: hrefMatch ? `https://www.instagram.com/${username}/` : href,
+      });
+    }
+    return [...found.values()];
+  }
   const visit = (node) => {
     if (Array.isArray(node)) {
       node.forEach(visit);
