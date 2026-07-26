@@ -591,20 +591,23 @@ function InstagramInsights({ notify }: { notify: Notify }) {
   const load = async (retryConnection = false) => {
     if (!supabase) return;
     setLoading(true);
-    let connectionResult = await supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").maybeSingle();
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id;
+    if (!userId) throw new Error("Please sign in again.");
+    let connectionResult = await supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").eq("user_id", userId).maybeSingle();
     if (retryConnection && !connectionResult.error && !connectionResult.data) {
       // The OAuth callback writes through the server and redirects immediately.
       // Retry briefly so a just-saved connection is reflected before rendering
       // the empty connection card.
       for (const delay of [250, 500, 1000]) {
         await new Promise((resolve) => window.setTimeout(resolve, delay));
-        connectionResult = await supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").maybeSingle();
+        connectionResult = await supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").eq("user_id", userId).maybeSingle();
         if (connectionResult.error || connectionResult.data) break;
       }
     }
     const [postsResult, prospectsResult] = await Promise.all([
-      supabase.from("instagram_media").select("id,article_id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,published_at,like_count,comments_count,instagram_media_insights(captured_on,views,reach,saved,shares,total_interactions,raw_metrics)").order("published_at", { ascending: false }).limit(500),
-      supabase.from("instagram_following").select("id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at").order("fit_score", { ascending: false }).limit(7500),
+      supabase.from("instagram_media").select("id,article_id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,published_at,like_count,comments_count,instagram_media_insights(captured_on,views,reach,saved,shares,total_interactions,raw_metrics)").eq("user_id", userId).order("published_at", { ascending: false }).limit(500),
+      supabase.from("instagram_following").select("id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at").eq("user_id", userId).order("fit_score", { ascending: false }).limit(7500),
     ]);
     if (connectionResult.error) {
       if (!/does not exist|schema cache/i.test(connectionResult.error.message)) throw connectionResult.error;
@@ -641,10 +644,21 @@ function InstagramInsights({ notify }: { notify: Notify }) {
       notify(params.get("message") || "Instagram authorization failed.", "error");
       window.history.replaceState({}, "", `${window.location.pathname}?view=insights`);
     }
-    void load(connected).catch((error) => {
-      setLoading(false);
-      notify(error instanceof Error ? error.message : "Couldn’t load Instagram insights.", "error");
-    });
+    if (connected) {
+      void sync().catch(async (error) => {
+        try {
+          await load(true);
+        } catch {
+          setLoading(false);
+        }
+        notify(error instanceof Error ? error.message : "Instagram connected, but the first insights refresh failed.", "error");
+      });
+    } else {
+      void load().catch((error) => {
+        setLoading(false);
+        notify(error instanceof Error ? error.message : "Couldn’t load Instagram insights.", "error");
+      });
+    }
   }, []);
 
   const connect = async () => {
