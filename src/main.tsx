@@ -592,29 +592,22 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     if (!supabase) return;
     setLoading(true);
     const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData.session?.user.id;
-    if (!userId) throw new Error("Please sign in again.");
-    let connectionResult = await supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").eq("user_id", userId).maybeSingle();
-    if (retryConnection && !connectionResult.error && !connectionResult.data) {
-      // The OAuth callback writes through the server and redirects immediately.
-      // Retry briefly so a just-saved connection is reflected before rendering
-      // the empty connection card.
-      for (const delay of [250, 500, 1000]) {
-        await new Promise((resolve) => window.setTimeout(resolve, delay));
-        connectionResult = await supabase.from("instagram_connections").select("instagram_username,facebook_page_name,followers_count,last_synced_at,last_following_import_at,token_expires_at").eq("user_id", userId).maybeSingle();
-        if (connectionResult.error || connectionResult.data) break;
-      }
+    if (!sessionData.session) throw new Error("Please sign in again.");
+    let status: { connection: InstagramConnection | null; posts: any[]; prospects: InstagramCollaborationProspect[] } | null = null;
+    const attempts = retryConnection ? [0, 250, 500, 1000] : [0];
+    for (const delay of attempts) {
+      if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+      const response = await fetch("/api/instagram-status", {
+        headers: { Authorization: `Bearer ${sessionData.session.access_token}` },
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Couldn’t load Instagram insights.");
+      status = result;
+      if (status?.connection || !retryConnection) break;
     }
-    const [postsResult, prospectsResult] = await Promise.all([
-      supabase.from("instagram_media").select("id,article_id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,published_at,like_count,comments_count,instagram_media_insights(captured_on,views,reach,saved,shares,total_interactions,raw_metrics)").eq("user_id", userId).order("published_at", { ascending: false }).limit(500),
-      supabase.from("instagram_following").select("id,username,display_name,biography,profile_url,profile_picture_url,followers_count,profile_data_available,fit_score,fit_label,fit_analysis,enriched_at").eq("user_id", userId).order("fit_score", { ascending: false }).limit(7500),
-    ]);
-    if (connectionResult.error) {
-      if (!/does not exist|schema cache/i.test(connectionResult.error.message)) throw connectionResult.error;
-    } else {
-      setConnection(connectionResult.data);
-    }
-    if (!postsResult.error) setPosts((postsResult.data ?? []).map((row: any) => {
+    if (!status) throw new Error("Couldn’t load Instagram insights.");
+    setConnection(status.connection);
+    setPosts((status.posts ?? []).map((row: any) => {
       const latest = [...(row.instagram_media_insights ?? [])].sort((a, b) => String(b.captured_on).localeCompare(String(a.captured_on)))[0] ?? {};
       const raw = latest.raw_metrics ?? {};
       const reach = Number(latest.reach || 0);
@@ -630,7 +623,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
         engagement_rate: Number(raw.engagement_rate ?? (reach ? (interactions / reach) * 100 : 0)),
       };
     }) as InstagramPost[]);
-    if (!prospectsResult.error) setProspects((prospectsResult.data ?? []) as InstagramCollaborationProspect[]);
+    setProspects((status.prospects ?? []) as InstagramCollaborationProspect[]);
     setLoading(false);
   };
 
