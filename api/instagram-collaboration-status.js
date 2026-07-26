@@ -7,7 +7,7 @@ export const COLLABORATION_STATUSES = new Set([
   "reached_out",
   "in_discussions",
   "in_place",
-  "archived",
+  "disqualified",
 ]);
 
 export function normalizeProspectIds(value) {
@@ -45,4 +45,3 @@ export default async function handler(req, res) {
     return safeError(res, error);
   }
 }
-
