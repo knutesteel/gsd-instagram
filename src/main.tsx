@@ -591,10 +591,12 @@ type InstagramSavedItem = {
   title: string;
   saved_at: string | null;
   imported_at: string;
+  review_status: SavedItemStatus;
 };
 
 type CollaborationStatus = "explore" | "reached_out" | "in_discussions" | "in_place" | "disqualified";
 type AnalysisStatus = "not_reviewed" | "automated_review" | "deep_review" | "unavailable";
+type SavedItemStatus = "not_reviewed" | "keep" | "delete";
 
 const COLLABORATION_STATUS_LABELS: Record<CollaborationStatus, string> = {
   explore: "Explore",
@@ -609,6 +611,12 @@ const ANALYSIS_STATUS_LABELS: Record<AnalysisStatus, string> = {
   automated_review: "Automated Review",
   deep_review: "Deep Review",
   unavailable: "Unavailable",
+};
+
+const SAVED_ITEM_STATUS_LABELS: Record<SavedItemStatus, string> = {
+  not_reviewed: "Not Reviewed",
+  keep: "Keep",
+  delete: "Delete",
 };
 
 function InstagramInsights({ notify }: { notify: Notify }) {
@@ -836,6 +844,24 @@ function InstagramInsights({ notify }: { notify: Notify }) {
     notify(`Moved ${Number(result.updated || ids.length).toLocaleString()} account${ids.length === 1 ? "" : "s"} to ${COLLABORATION_STATUS_LABELS[status]}.`);
   };
 
+  const updateSavedItemStatus = async (id: string, status: SavedItemStatus) => {
+    if (!supabase) return;
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) throw new Error("Please sign in again.");
+    const response = await fetch("/api/instagram-saved-status", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${data.session.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ id, status }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Couldn’t update the saved item.");
+    setSavedItems((rows) => rows.map((row) => row.id === id ? { ...row, review_status: status } : row));
+    notify(status === "delete" ? "Saved item removed from view." : `Saved item marked ${SAVED_ITEM_STATUS_LABELS[status]}.`);
+  };
+
   const sum = (field: keyof Pick<InstagramPost, "views" | "reach" | "total_interactions" | "saved" | "shares">) =>
     posts.reduce((total, post) => total + Number(post[field] || 0), 0);
   const totalReach = sum("reach");
@@ -912,7 +938,7 @@ function InstagramInsights({ notify }: { notify: Notify }) {
       <h2>Connect @hankandthesquirrel</h2>
       <p>Authorize the Facebook Page connected to your Instagram Business account. Meta credentials remain server-side.</p>
       <button className="button primary" onClick={() => void connect().catch((error) => notify(error instanceof Error ? error.message : "Couldn’t connect Instagram.", "error"))}>Connect Instagram</button>
-    </div> : tab === "saved" ? <InstagramSavedItems items={savedItems} importing={importing} onImport={() => savedFileRef.current?.click()} /> : tab === "following" ? <InstagramCollaborationTab relationshipType="following" prospects={prospects} lastImportedAt={connection.last_following_import_at} onImport={() => followingFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : tab === "followers" ? <InstagramCollaborationTab relationshipType="followers" prospects={followers} lastImportedAt={connection.last_followers_import_at} onImport={() => followersFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : <>
+    </div> : tab === "saved" ? <InstagramSavedItems items={savedItems} importing={importing} onImport={() => savedFileRef.current?.click()} onStatusChange={updateSavedItemStatus} notify={notify} /> : tab === "following" ? <InstagramCollaborationTab relationshipType="following" prospects={prospects} lastImportedAt={connection.last_following_import_at} onImport={() => followingFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : tab === "followers" ? <InstagramCollaborationTab relationshipType="followers" prospects={followers} lastImportedAt={connection.last_followers_import_at} onImport={() => followersFileRef.current?.click()} importing={importing} onStatusChange={updateCollaborationStatus} notify={notify} /> : <>
       <div className="instagram-account-bar">
         <div><b>@{connection.instagram_username || "Instagram account"}</b><span>{connection.facebook_page_name || "Connected Facebook Page"}</span></div>
         <span>{connection.last_synced_at ? `Last refreshed ${new Date(connection.last_synced_at).toLocaleString()}` : "Ready for first refresh"}</span>
@@ -952,7 +978,23 @@ function InstagramInsights({ notify }: { notify: Notify }) {
   </section>;
 }
 
-function InstagramSavedItems({ items, importing, onImport }: { items: InstagramSavedItem[]; importing: boolean; onImport: () => void }) {
+function InstagramSavedItems({ items, importing, onImport, onStatusChange, notify }: { items: InstagramSavedItem[]; importing: boolean; onImport: () => void; onStatusChange: (id: string, status: SavedItemStatus) => Promise<void>; notify: Notify }) {
+  const [statusFilter, setStatusFilter] = useState<SavedItemStatus | "all">("all");
+  const [updatingId, setUpdatingId] = useState<string | null>(null);
+  const visibleItems = items.filter((item) =>
+    item.review_status !== "delete" && (statusFilter === "all" || item.review_status === statusFilter));
+
+  const changeStatus = async (id: string, status: SavedItemStatus) => {
+    setUpdatingId(id);
+    try {
+      await onStatusChange(id, status);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Couldn’t update the saved item.", "error");
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
   if (!items.length) return <div className="panel instagram-following-empty">
     <FiBookmark />
     <h2>Import your saved Instagram items</h2>
@@ -960,13 +1002,28 @@ function InstagramSavedItems({ items, importing, onImport }: { items: InstagramS
     <button className="button primary" disabled={importing} onClick={onImport}><FiUpload /> {importing ? "Importing…" : "Import saved HTML"}</button>
   </div>;
   return <>
-    <div className="instagram-collaboration-note">Showing {items.length.toLocaleString()} saved posts and Reels. Import a newer export at any time; existing links are updated without creating duplicates.</div>
-    <div className="instagram-saved-grid">
-      {items.map((item) => <a className="instagram-saved-card" key={item.id} href={item.instagram_url} target="_blank" rel="noreferrer">
-        <span className="instagram-saved-icon"><FiBookmark /></span>
-        <span><b>{item.title || "Saved Instagram item"}</b><small>{item.media_type === "reel" ? "Reel" : "Post"} · {item.saved_at ? `Saved ${new Date(item.saved_at).toLocaleDateString()}` : `Imported ${new Date(item.imported_at).toLocaleDateString()}`}</small></span>
-        <FiExternalLink />
-      </a>)}
+    <div className="instagram-saved-toolbar">
+      <div className="instagram-collaboration-note">Showing {visibleItems.length.toLocaleString()} saved posts and Reels. Items marked Delete are hidden.</div>
+      <label>Status
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as SavedItemStatus | "all")}>
+          <option value="all">All active</option>
+          <option value="not_reviewed">Not Reviewed</option>
+          <option value="keep">Keep</option>
+        </select>
+      </label>
+    </div>
+    <div className="instagram-saved-table">
+      <div className="instagram-saved-row instagram-saved-header">
+        <span>Title</span><span>Content overview</span><span>Status</span>
+      </div>
+      {visibleItems.map((item) => <div className="instagram-saved-row" key={item.id}>
+        <a href={item.instagram_url} target="_blank" rel="noreferrer">{item.media_type === "reel" ? "Instagram Reel" : "Instagram Post"} <FiExternalLink /></a>
+        <span className="instagram-saved-overview">{item.title || "No content overview was included in the Instagram export."}</span>
+        <select aria-label={`Status for ${item.title || "saved Instagram item"}`} value={item.review_status} disabled={updatingId === item.id} onChange={(event) => void changeStatus(item.id, event.target.value as SavedItemStatus)}>
+          {Object.entries(SAVED_ITEM_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+        </select>
+      </div>)}
+      {!visibleItems.length && <div className="empty-queue"><FiBookmark /><h2>No matching saved items</h2><p>Choose another status or import a newer Instagram export.</p></div>}
     </div>
   </>;
 }

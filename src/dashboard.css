@@ -282,6 +282,16 @@
 .instagram-saved-card b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .instagram-saved-card small { margin-top: 6px; color: #756f66; }
 .instagram-saved-icon { display: grid; width: 40px; height: 40px; place-items: center; color: #c85032; background: #f7e8e2; border-radius: 10px; }
+.instagram-saved-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.instagram-saved-toolbar .instagram-collaboration-note { flex: 1; margin: 0; }
+.instagram-saved-toolbar label { display: flex; align-items: center; gap: 8px; color: #625f57; font-size: 13px; font-weight: 700; }
+.instagram-saved-toolbar select, .instagram-saved-row select { min-height: 38px; padding: 0 34px 0 11px; border: 1px solid #d9d3c8; border-radius: 8px; background: #fff; color: #2c3028; }
+.instagram-saved-table { overflow: hidden; border: 1px solid #e5dfd4; border-radius: 14px; background: #fff; }
+.instagram-saved-row { display: grid; grid-template-columns: minmax(150px, .55fr) minmax(320px, 1.6fr) minmax(150px, .45fr); gap: 18px; align-items: center; padding: 15px 18px; border-bottom: 1px solid #eee9df; font-size: 13px; }
+.instagram-saved-row:last-child { border-bottom: 0; }
+.instagram-saved-header { color: #777168; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+.instagram-saved-row a { display: inline-flex; align-items: center; gap: 6px; color: #b7482e; font-weight: 700; text-decoration: none; }
+.instagram-saved-overview { color: #514f49; line-height: 1.45; }
 .instagram-collaboration-controls { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
 .instagram-collaboration-controls label { display: flex; align-items: center; gap: 8px; color: #625f57; font-size: 13px; font-weight: 700; }
 .instagram-collaboration-controls select { min-height: 38px; padding: 0 34px 0 11px; border: 1px solid #d9d3c8; border-radius: 8px; background: #fff; color: #2c3028; }
@@ -349,6 +359,9 @@
   .instagram-collaboration-controls, .instagram-bulk-actions, .instagram-detail-heading { align-items: stretch; flex-direction: column; }
   .instagram-research-grid { grid-template-columns: 1fr; }
   .instagram-collaboration-details { padding-left: 18px; }
+  .instagram-saved-toolbar { align-items: stretch; flex-direction: column; }
+  .instagram-saved-table { overflow-x: auto; }
+  .instagram-saved-row { min-width: 720px; }
   .insights-metrics { grid-template-columns: 1fr 1fr; }
   .instagram-account-bar { align-items: flex-start; flex-direction: column; }
 }

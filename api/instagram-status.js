@@ -30,7 +30,7 @@ export default async function handler(req, res) {
         config,
       ),
       fetchRows(
-        `${config.supabaseUrl}/rest/v1/instagram_saved_items?user_id=eq.${userId}&select=id,instagram_url,shortcode,media_type,title,saved_at,imported_at&order=saved_at.desc.nullslast,imported_at.desc&limit=10000`,
+        `${config.supabaseUrl}/rest/v1/instagram_saved_items?user_id=eq.${userId}&select=id,instagram_url,shortcode,media_type,title,saved_at,imported_at,review_status&order=saved_at.desc.nullslast,imported_at.desc&limit=10000`,
         config,
       ),
     ]);
