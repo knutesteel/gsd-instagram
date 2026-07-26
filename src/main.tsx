@@ -962,7 +962,7 @@ function AuthGate() {
       if (error) throw error;
       setCode("");
       setCodeSent(true);
-      setMessage("We emailed you a new 6-digit code. Use the newest email—requesting another code invalidates the previous one.");
+      setMessage("We emailed you a new sign-in code. Use the newest email—requesting another code invalidates the previous one.");
     } catch (error) {
       setMessageKind("error");
       setMessage(error instanceof Error ? error.message : "We couldn’t send a sign-in code. Please try again.");
@@ -973,9 +973,9 @@ function AuthGate() {
   const verifyCode = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!supabase) return;
-    if (code.length !== 6) {
+    if (code.length < 6 || code.length > 8) {
       setMessageKind("error");
-      setMessage("Enter all 6 digits from the newest sign-in email.");
+      setMessage("Enter the complete 6–8 digit code from the newest sign-in email.");
       return;
     }
     setSending(true);
@@ -1015,7 +1015,7 @@ function AuthGate() {
     <div className="brand"><span>GSD</span><em>Instagram</em></div>
     <h1>Your story desk</h1><p>Sign in to save research, concepts, and assets privately to your workspace.</p>
     <label className="field"><b>Email address</b><input required disabled={codeSent || sending} type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" /></label>
-    {codeSent && <label className="field"><b>6-digit sign-in code</b><input className="auth-code-input" required autoFocus inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" /></label>}
+    {codeSent && <label className="field"><b>Sign-in code</b><input className="auth-code-input" required autoFocus inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6,8}" minLength={6} maxLength={8} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="Enter 6–8 digits" /></label>}
     <button type="submit" className="button primary wide" disabled={sending}>{sending ? (codeSent ? "Signing in…" : "Sending…") : (codeSent ? "Sign in with code" : "Email me a sign-in code")}</button>
     {codeSent && <div className="auth-code-actions">
       <button type="button" disabled={sending} onClick={() => { setCodeSent(false); setCode(""); setMessage(""); setMessageKind("status"); }}>Use a different email</button>
