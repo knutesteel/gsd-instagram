@@ -240,6 +240,11 @@
 .instagram-post-table { overflow: hidden; border: 1px solid #e5dfd4; border-radius: 14px; background: #fff; }
 .instagram-post-head, .instagram-post-row { display: grid; grid-template-columns: minmax(300px, 2.6fr) repeat(7, minmax(72px, .65fr)); gap: 12px; align-items: center; padding: 14px 18px; }
 .instagram-post-head { border-bottom: 1px solid #e5dfd4; color: #777168; font-size: 11px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+.instagram-sort-header { display: flex; align-items: center; justify-content: space-between; gap: 5px; min-width: 0; padding: 5px 0; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; text-align: left; text-transform: inherit; cursor: pointer; }
+.instagram-sort-header:hover, .instagram-sort-header:focus-visible, .instagram-sort-header.active { color: #425036; }
+.instagram-sort-header:focus-visible { border-radius: 4px; outline: 2px solid #9aa987; outline-offset: 2px; }
+.instagram-sort-indicator { flex: 0 0 auto; color: #9a958c; font-size: 10px; }
+.instagram-sort-header.active .instagram-sort-indicator { color: #c85032; }
 .instagram-post-row { border-bottom: 1px solid #eee9df; font-size: 13px; }
 .instagram-post-row:last-child { border-bottom: 0; }
 .instagram-post-summary { display: flex; align-items: center; gap: 12px; min-width: 0; }
