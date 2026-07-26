@@ -581,14 +581,14 @@ type InstagramCollaborationProspect = {
   researched_at: string | null;
 };
 
-type CollaborationStatus = "explore" | "reached_out" | "in_discussions" | "in_place" | "archived";
+type CollaborationStatus = "explore" | "reached_out" | "in_discussions" | "in_place" | "disqualified";
 
 const COLLABORATION_STATUS_LABELS: Record<CollaborationStatus, string> = {
   explore: "Explore",
   reached_out: "Reached Out",
   in_discussions: "In Discussions",
   in_place: "In Place",
-  archived: "Archived",
+  disqualified: "Disqualified",
 };
 
 function InstagramInsights({ notify }: { notify: Notify }) {
