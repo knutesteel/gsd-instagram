@@ -589,6 +589,7 @@ type InstagramSavedItem = {
   shortcode: string | null;
   media_type: string;
   title: string;
+  content_overview: string;
   saved_at: string | null;
   imported_at: string;
   review_status: SavedItemStatus;
@@ -1017,8 +1018,8 @@ function InstagramSavedItems({ items, importing, onImport, onStatusChange, notif
         <span>Title</span><span>Content overview</span><span>Status</span>
       </div>
       {visibleItems.map((item) => <div className="instagram-saved-row" key={item.id}>
-        <a href={item.instagram_url} target="_blank" rel="noreferrer">{item.media_type === "reel" ? "Instagram Reel" : "Instagram Post"} <FiExternalLink /></a>
-        <span className="instagram-saved-overview">{item.title || "No content overview was included in the Instagram export."}</span>
+        <a href={item.instagram_url} target="_blank" rel="noreferrer">{item.title || (item.media_type === "reel" ? "Instagram Reel" : "Instagram Post")} <FiExternalLink /></a>
+        <span className="instagram-saved-overview">{item.content_overview || "No content overview is available."}</span>
         <select aria-label={`Status for ${item.title || "saved Instagram item"}`} value={item.review_status} disabled={updatingId === item.id} onChange={(event) => void changeStatus(item.id, event.target.value as SavedItemStatus)}>
           {Object.entries(SAVED_ITEM_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
