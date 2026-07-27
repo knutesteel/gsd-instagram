@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   GENERATION_SPREADSHEET_ID,
+  finalizeRowResults,
   isScheduledSyncRequest,
   oneRelatedRecord,
   uniqueSheetOwner,
@@ -55,4 +56,21 @@ test("accepts unique PostgREST relationships returned as objects", () => {
   assert.equal(oneRelatedRecord(concept), concept);
   assert.equal(oneRelatedRecord([concept]), concept);
   assert.equal(oneRelatedRecord([]), undefined);
+});
+
+test("converts every silently skipped populated row into an explicit failure", () => {
+  assert.deepEqual(finalizeRowResults([
+    { rowNumber: 2, identifier: "35" },
+    { rowNumber: 3, identifier: "32" },
+  ], [
+    { rowNumber: 2, identifier: "35", outcome: "updated", reason: "Reconciled." },
+  ]), [
+    { rowNumber: 2, identifier: "35", outcome: "updated", reason: "Reconciled." },
+    {
+      rowNumber: 3,
+      identifier: "32",
+      outcome: "failed",
+      reason: "The spreadsheet row was not processed by synchronization.",
+    },
+  ]);
 });
