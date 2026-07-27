@@ -23,6 +23,7 @@ const driveImageUrl = (url) => {
 };
 const extensionFor = (contentType) => contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+const MAX_ASSET_IMPORTS_PER_RUN = 3;
 export const firstMissingImageSequence = (sourceImages, activeAssets) => {
   const imported = new Set((activeAssets || []).map((asset) => Number(asset.sequence)).filter(Number.isInteger));
   return sourceImages.findIndex((_url, index) => !imported.has(index + 1)) + 1;
@@ -77,6 +78,55 @@ export const sheetImageSummary = (currentSummary, images, importedImageCount = 0
   sheet_images: images,
   imported_image_count: importedImageCount,
 });
+async function createSyncRun({ supabaseUrl, headers, userId, trigger }) {
+  const response = await fetch(`${supabaseUrl}/rest/v1/sheet_sync_runs`, {
+    method: "POST",
+    headers: { ...headers, Prefer: "return=representation" },
+    body: JSON.stringify([{ user_id: userId, trigger }]),
+  });
+  if (!response.ok) throw new Error("Couldn’t create the synchronization audit record.");
+  return (await response.json())[0];
+}
+async function finishSyncRun({ supabaseUrl, headers, runId, status, rowsProcessed = 0, rowsFailed = 0, imagesImported = 0, errorMessage = null, details = {} }) {
+  if (!runId) return;
+  await fetch(`${supabaseUrl}/rest/v1/sheet_sync_runs?id=eq.${runId}`, {
+    method: "PATCH",
+    headers: { ...headers, Prefer: "return=minimal" },
+    body: JSON.stringify({
+      status,
+      rows_processed: rowsProcessed,
+      rows_failed: rowsFailed,
+      images_imported: imagesImported,
+      error_message: errorMessage,
+      details,
+      finished_at: new Date().toISOString(),
+    }),
+  });
+}
+async function saveItemState({ supabaseUrl, headers, userId, articleId, identifier, stage, status, errorMessage = null, expectedImages = 0, importedImages = 0 }) {
+  const failed = status === "failed";
+  const now = new Date().toISOString();
+  const response = await fetch(`${supabaseUrl}/rest/v1/sheet_sync_items?on_conflict=user_id,article_id`, {
+    method: "POST",
+    headers: { ...headers, Prefer: "resolution=merge-duplicates,return=minimal" },
+    body: JSON.stringify([{
+      user_id: userId,
+      article_id: articleId,
+      identifier: Number(identifier),
+      stage,
+      status,
+      error_message: errorMessage,
+      expected_images: expectedImages,
+      imported_images: importedImages,
+      last_attempt_at: now,
+      last_success_at: status === "complete" ? now : null,
+      next_retry_at: failed ? new Date(Date.now() + 10 * 60 * 1000).toISOString() : null,
+      retry_count: failed ? 1 : 0,
+      updated_at: now,
+    }]),
+  });
+  if (!response.ok) throw new Error(`Couldn’t save synchronization state for #${identifier}.`);
+}
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n");
@@ -189,6 +239,8 @@ export default async function handler(req, res) {
   if (!token || !supabaseUrl || !key) return res.status(500).json({ error: "Server configuration is incomplete." });
   const headers = { apikey: key, Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   let user;
+  let run = null;
+  const syncMode = req.syncMode || (scheduled ? "records" : "all");
   if (scheduled) {
     const serviceHeaders = { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" };
     const ownersResponse = await fetch(`${supabaseUrl}/rest/v1/articles?generation_identifier=not.is.null&select=user_id`, { headers: serviceHeaders });
@@ -205,6 +257,12 @@ export default async function handler(req, res) {
     user = await userResponse.json();
   }
   try {
+    run = await createSyncRun({
+      supabaseUrl,
+      headers,
+      userId: user.id,
+      trigger: scheduled ? (syncMode === "assets" ? "scheduled_assets" : "scheduled_records") : "manual",
+    });
     const accessToken = await googleToken();
     const sheet = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!sheet.ok) throw new Error("Couldn’t read the generation sheet.");
@@ -218,7 +276,10 @@ export default async function handler(req, res) {
     // values are repaired below; they are never queried as current identities.
     const canonicalRows = uniqueNumericSheetRows(rows);
     const syncedRows = canonicalRows.rows;
-    if (!syncedRows.length) return res.status(200).json({ updatedArticleIds: [], statuses: {}, statusMismatches: [], restoredIdentifiers });
+    if (!syncedRows.length) {
+      await finishSyncRun({ supabaseUrl, headers, runId: run.id, status: "completed" });
+      return res.status(200).json({ updatedArticleIds: [], statuses: {}, statusMismatches: [], restoredIdentifiers });
+    }
     const updatedArticleIds = [];
     const statuses = {};
     const statusMismatches = [];
@@ -336,6 +397,12 @@ export default async function handler(req, res) {
         sourceImages,
         images,
       });
+      await saveItemState({
+        supabaseUrl, headers, userId: user.id, articleId: article.id, identifier,
+        stage: sourceImages.length ? "assets_pending" : "record_sync",
+        status: sourceImages.length ? "pending" : "complete",
+        expectedImages: sourceImages.length,
+      });
       } catch (error) {
         if (shouldReportSyncIssue(articleCreatedAtByIdentifier.get(identifier))) {
           syncErrors.push({
@@ -349,6 +416,7 @@ export default async function handler(req, res) {
     // Pass 2: synchronize captions and image references for every status,
     // including Posted. Posted previously returned early, which permanently
     // hid images when the initial import had not completed.
+    let imagesImportedThisRun = 0;
     for (const { identifier, article, concept, row, sourceImages, images } of enrichmentQueue) {
       try {
         const caption = String(row[10] || "");
@@ -385,7 +453,8 @@ export default async function handler(req, res) {
           }
         }
 
-        if (!sourceImages.length) continue;
+        if (!sourceImages.length || syncMode === "records") continue;
+        if (imagesImportedThisRun >= MAX_ASSET_IMPORTS_PER_RUN) continue;
         const assetsResponse = await fetch(
           `${supabaseUrl}/rest/v1/assets?concept_id=eq.${concept.id}&source=eq.generated&is_active=eq.true&select=id,sequence,storage_path`,
           { headers },
@@ -403,6 +472,11 @@ export default async function handler(req, res) {
             });
             if (!countUpdate.ok) throw new Error(`Couldn’t verify imported assets for #${identifier}.`);
           }
+          await saveItemState({
+            supabaseUrl, headers, userId: user.id, articleId: article.id, identifier,
+            stage: "assets", status: "complete", expectedImages: sourceImages.length,
+            importedImages: currentImportedCount,
+          });
           continue;
         }
 
@@ -449,7 +523,23 @@ export default async function handler(req, res) {
           body: JSON.stringify({ image_summary: sheetImageSummary(concept.image_summary, images, newImportedCount) }),
         });
         if (!countUpdate.ok) throw new Error(`Couldn’t finalize imported assets for #${identifier}.`);
+        imagesImportedThisRun += 1;
+        await saveItemState({
+          supabaseUrl, headers, userId: user.id, articleId: article.id, identifier,
+          stage: "assets",
+          status: newImportedCount >= sourceImages.length ? "complete" : "pending",
+          expectedImages: sourceImages.length,
+          importedImages: newImportedCount,
+        });
       } catch (error) {
+        try {
+          await saveItemState({
+            supabaseUrl, headers, userId: user.id, articleId: article.id, identifier,
+            stage: "assets", status: "failed",
+            errorMessage: error instanceof Error ? error.message : "Generated images could not be synchronized.",
+            expectedImages: sourceImages.length,
+          });
+        } catch {}
         if (shouldReportSyncIssue(article.created_at)) {
           syncErrors.push({
             identifier,
@@ -463,6 +553,21 @@ export default async function handler(req, res) {
     } catch (error) {
       restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
     }
-    return res.status(200).json({ scheduled, updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning, syncErrors });
-  } catch (error) { return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." }); }
+    await finishSyncRun({
+      supabaseUrl, headers, runId: run.id,
+      status: syncErrors.length || restorationWarning ? "partial" : "completed",
+      rowsProcessed: syncedRows.length,
+      rowsFailed: syncErrors.length,
+      imagesImported: imagesImportedThisRun,
+      details: { syncMode, updatedArticleIds, restoredIdentifiers, restorationWarning },
+    });
+    return res.status(200).json({ scheduled, syncMode, updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning, syncErrors });
+  } catch (error) {
+    await finishSyncRun({
+      supabaseUrl, headers, runId: run?.id, status: "failed",
+      errorMessage: error instanceof Error ? error.message : "Couldn’t sync generated content.",
+      details: { syncMode },
+    });
+    return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t sync generated content." });
+  }
 }
