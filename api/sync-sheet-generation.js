@@ -2,7 +2,11 @@ import { createPrivateKey, sign } from "node:crypto";
 import { extendSheetFilter } from "./sheet-filter.js";
 import { sharedFieldsFromSheetRow } from "./sheet-sync-fields.js";
 
-const spreadsheetId = process.env.GOOGLE_GENERATION_SHEET_ID || "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
+// The production workflow has one approved sheet. A stale deployment
+// environment variable must never redirect synchronization to an old copy.
+export const GENERATION_SPREADSHEET_ID = "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
+const spreadsheetId = GENERATION_SPREADSHEET_ID;
+const EXPECTED_SHEET_HEADERS = ["Created", "Status", "Article Title", "Identifier"];
 // Grandfather records created before July 25, 2026 in the user's Eastern
 // timezone. Keep synchronizing them, but do not surface their historical
 // mismatches as current workflow errors.
@@ -35,6 +39,7 @@ export const countImportedImages = (sourceImages, activeAssets) => {
 const typeLabel = (postType) => ({ carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" }[postType] || postType || "Carousel");
 const normalizeSheetStatus = (value) => {
   const normalized = String(value || "").trim().toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  if (normalized === "new") return { database: "new", label: "New" };
   if (normalized === "pending" || normalized === "sent to sheets") return { database: "sent_to_sheets", label: "Sent to Sheets" };
   if (normalized === "generated") return { database: "generated", label: "Generated" };
   if (normalized === "approved" || normalized === "approved to post") return { database: "approved_to_post", label: "Approved" };
@@ -59,6 +64,24 @@ export const uniqueNumericSheetRows = (rows) => {
   }
   for (const identifier of duplicates) byIdentifier.delete(identifier);
   return { rows: [...byIdentifier.values()], duplicateIdentifiers: [...duplicates] };
+};
+export const validateGenerationSheet = (rows) => {
+  if (!Array.isArray(rows) || !rows.length) {
+    throw new Error("The approved generation sheet is empty.");
+  }
+  const headers = EXPECTED_SHEET_HEADERS.map((_header, index) => String(rows[0]?.[index] || "").trim());
+  if (headers.some((header, index) => header !== EXPECTED_SHEET_HEADERS[index])) {
+    throw new Error("The approved generation sheet has unexpected columns. Synchronization stopped before changing app data.");
+  }
+  const numericRows = rows.slice(1).filter((row) => isNumericIdentifier(row?.[3]));
+  if (numericRows.length < 10) {
+    throw new Error(`The approved generation sheet returned only ${numericRows.length} identified rows. Synchronization stopped before changing app data.`);
+  }
+  return {
+    totalDataRows: rows.length - 1,
+    numericRows: numericRows.length,
+    firstIdentifier: String(numericRows[0]?.[3] || "").trim(),
+  };
 };
 export const isScheduledSyncRequest = (req, cronSecret = process.env.CRON_SECRET) => {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
@@ -267,6 +290,7 @@ export default async function handler(req, res) {
     const sheet = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Sheet1!A:R")}`, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!sheet.ok) throw new Error("Couldn’t read the generation sheet.");
     const rows = (await sheet.json()).values ?? [];
+    const sheetDiagnostics = validateGenerationSheet(rows);
     // Sheet status reconciliation is the primary responsibility of this route.
     // Row restoration is maintenance work and must never prevent an existing
     // identifier from moving to Generated/Approved/Posted.
@@ -298,6 +322,16 @@ export default async function handler(req, res) {
         identifier,
         error: `Duplicate spreadsheet rows use identifier #${identifier}. Neither row was synchronized.`,
       }));
+    for (const [index, row] of rows.slice(1).entries()) {
+      const identifier = String(row?.[3] || "").trim();
+      const status = String(row?.[1] || "").trim();
+      if (!identifier && !status) continue;
+      if (!isNumericIdentifier(identifier)) {
+        syncErrors.push({ identifier: identifier || `row ${index + 2}`, error: `Spreadsheet row ${index + 2} has no valid numeric identifier.` });
+      } else if (!normalizeSheetStatus(status)) {
+        syncErrors.push({ identifier, error: `Spreadsheet row ${index + 2} has unsupported status "${status || "(blank)"}".` });
+      }
+    }
 
     // Pass 1: reconcile every identifier's status before doing any image
     // downloads. Image work can be slow or fail, but it must never prevent a
@@ -548,10 +582,14 @@ export default async function handler(req, res) {
         }
       }
     }
-    try {
-      restoredIdentifiers = await restoreMissingSheetRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
-    } catch (error) {
-      restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
+    // Sheet repair is an explicit maintenance action. Normal pulls must never
+    // append or overwrite sheet rows while reconciling the app.
+    if (!scheduled && req.body?.repairMissingRows === true) {
+      try {
+        restoredIdentifiers = await restoreMissingSheetRows({ rows, accessToken, supabaseUrl, headers, userId: user.id });
+      } catch (error) {
+        restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
+      }
     }
     await finishSyncRun({
       supabaseUrl, headers, runId: run.id,
@@ -559,7 +597,7 @@ export default async function handler(req, res) {
       rowsProcessed: syncedRows.length,
       rowsFailed: syncErrors.length,
       imagesImported: imagesImportedThisRun,
-      details: { syncMode, updatedArticleIds, restoredIdentifiers, restorationWarning },
+      details: { syncMode, spreadsheetId, sheetDiagnostics, updatedArticleIds, restoredIdentifiers, restorationWarning, syncErrors },
     });
     return res.status(200).json({ scheduled, syncMode, updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning, syncErrors });
   } catch (error) {
