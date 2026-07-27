@@ -5,7 +5,8 @@
   "outputDirectory": "dist",
   "crons": [
     { "path": "/api/instagram-cron", "schedule": "17 10 * * *" },
-    { "path": "/api/sync-sheet-generation", "schedule": "*/10 * * * *" }
+    { "path": "/api/sync-sheet-generation", "schedule": "*/10 * * * *" },
+    { "path": "/api/sync-sheet-assets", "schedule": "5-59/10 * * * *" }
   ],
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
