@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   GENERATION_SPREADSHEET_ID,
   isScheduledSyncRequest,
+  oneRelatedRecord,
   uniqueSheetOwner,
   validateGenerationSheet,
 } from "./sync-sheet-generation.js";
@@ -47,4 +48,11 @@ test("validates sheet identity and rejects suspiciously incomplete reads", () =>
     ["Created", "Status", "Article Title", "Identifier"],
     ["07/27/2026", "Generated", "Only one", "1"],
   ]), /only 1 identified row/i);
+});
+
+test("accepts unique PostgREST relationships returned as objects", () => {
+  const concept = { id: "concept-1" };
+  assert.equal(oneRelatedRecord(concept), concept);
+  assert.equal(oneRelatedRecord([concept]), concept);
+  assert.equal(oneRelatedRecord([]), undefined);
 });

@@ -83,6 +83,10 @@ export const validateGenerationSheet = (rows) => {
     firstIdentifier: String(numericRows[0]?.[3] || "").trim(),
   };
 };
+// PostgREST embeds a unique relationship as an object and a one-to-many
+// relationship as an array. Accept both so schema metadata cannot silently
+// make every valid article look as though its content is missing.
+export const oneRelatedRecord = (value) => Array.isArray(value) ? value[0] : value;
 export const isScheduledSyncRequest = (req, cronSecret = process.env.CRON_SECRET) => {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   return Boolean(cronSecret && token === cronSecret);
@@ -205,7 +209,7 @@ async function restoreMissingSheetRows({ rows, accessToken, supabaseUrl, headers
   if (!response.ok) throw new Error("Couldn’t check sheet-backed and archived items.");
   const missing = (await response.json()).filter((article) => article.generation_identifier && !sheetIdentifiers.has(String(article.generation_identifier).trim()));
   for (const article of missing) {
-    const concept = article.post_concepts?.[0];
+    const concept = oneRelatedRecord(article.post_concepts);
     if (!concept) continue;
     const articleUrl = rowKey(article.source_url || article.canonical_url);
     const articleTitle = rowKey(article.title);
@@ -343,7 +347,7 @@ export default async function handler(req, res) {
       const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,created_at,source_url,canonical_url,source,generation_identifier,generation_sheet_row,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
       if (!articleResponse.ok) throw new Error("Couldn’t load the matching app record.");
       const article = (await articleResponse.json())[0];
-      const concept = article?.post_concepts?.[0];
+      const concept = oneRelatedRecord(article?.post_concepts);
       if (!concept) throw new Error("The matching app record or content is missing.");
 
       const normalizedStatus = normalizeSheetStatus(row[1]);
@@ -438,12 +442,10 @@ export default async function handler(req, res) {
         expectedImages: sourceImages.length,
       });
       } catch (error) {
-        if (shouldReportSyncIssue(articleCreatedAtByIdentifier.get(identifier))) {
-          syncErrors.push({
-            identifier,
-            error: error instanceof Error ? error.message : "This row could not be synchronized.",
-          });
-        }
+        syncErrors.push({
+          identifier,
+          error: error instanceof Error ? error.message : "This row could not be synchronized.",
+        });
       }
     }
 
@@ -574,12 +576,10 @@ export default async function handler(req, res) {
             expectedImages: sourceImages.length,
           });
         } catch {}
-        if (shouldReportSyncIssue(article.created_at)) {
-          syncErrors.push({
-            identifier,
-            error: error instanceof Error ? error.message : "Generated images could not be synchronized.",
-          });
-        }
+        syncErrors.push({
+          identifier,
+          error: error instanceof Error ? error.message : "Generated images could not be synchronized.",
+        });
       }
     }
     // Sheet repair is an explicit maintenance action. Normal pulls must never
