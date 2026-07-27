@@ -87,6 +87,15 @@ export const validateGenerationSheet = (rows) => {
 // relationship as an array. Accept both so schema metadata cannot silently
 // make every valid article look as though its content is missing.
 export const oneRelatedRecord = (value) => Array.isArray(value) ? value[0] : value;
+export const finalizeRowResults = (populatedRows, results = []) => {
+  const byRow = new Map(results.map((result) => [result.rowNumber, result]));
+  return populatedRows.map(({ rowNumber, identifier }) => byRow.get(rowNumber) || {
+    rowNumber,
+    identifier: identifier || `row ${rowNumber}`,
+    outcome: "failed",
+    reason: "The spreadsheet row was not processed by synchronization.",
+  });
+};
 export const isScheduledSyncRequest = (req, cronSecret = process.env.CRON_SECRET) => {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   return Boolean(cronSecret && token === cronSecret);
@@ -313,6 +322,23 @@ export default async function handler(req, res) {
     const statusMismatches = [];
     const imagesByArticleId = {};
     const enrichmentQueue = [];
+    const populatedRows = rows.slice(1)
+      .map((row, index) => ({
+        row,
+        rowNumber: index + 2,
+        identifier: String(row?.[3] || "").trim(),
+        status: String(row?.[1] || "").trim(),
+      }))
+      .filter(({ identifier, status }) => identifier || status);
+    const rowResultsByNumber = new Map();
+    const setRowResult = (rowNumber, identifier, outcome, reason) => {
+      rowResultsByNumber.set(rowNumber, {
+        rowNumber,
+        identifier: identifier || `row ${rowNumber}`,
+        outcome,
+        reason,
+      });
+    };
     const articleDatesResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&select=generation_identifier,created_at`, { headers });
     if (!articleDatesResponse.ok) throw new Error("Couldn’t load article dates for synchronization.");
     const articleCreatedAtByIdentifier = new Map(
@@ -321,19 +347,21 @@ export default async function handler(req, res) {
         .map((article) => [String(article.generation_identifier).trim(), article.created_at]),
     );
     const syncErrors = canonicalRows.duplicateIdentifiers
-      .filter((identifier) => shouldReportSyncIssue(articleCreatedAtByIdentifier.get(identifier)))
       .map((identifier) => ({
         identifier,
         error: `Duplicate spreadsheet rows use identifier #${identifier}. Neither row was synchronized.`,
       }));
-    for (const [index, row] of rows.slice(1).entries()) {
-      const identifier = String(row?.[3] || "").trim();
-      const status = String(row?.[1] || "").trim();
-      if (!identifier && !status) continue;
+    for (const { row, rowNumber, identifier, status } of populatedRows) {
       if (!isNumericIdentifier(identifier)) {
-        syncErrors.push({ identifier: identifier || `row ${index + 2}`, error: `Spreadsheet row ${index + 2} has no valid numeric identifier.` });
+        const reason = `Spreadsheet row ${rowNumber} has no valid numeric identifier.`;
+        syncErrors.push({ identifier: identifier || `row ${rowNumber}`, error: reason });
+        setRowResult(rowNumber, identifier, "failed", reason);
       } else if (!normalizeSheetStatus(status)) {
-        syncErrors.push({ identifier, error: `Spreadsheet row ${index + 2} has unsupported status "${status || "(blank)"}".` });
+        const reason = `Spreadsheet row ${rowNumber} has unsupported status "${status || "(blank)"}".`;
+        syncErrors.push({ identifier, error: reason });
+        setRowResult(rowNumber, identifier, "failed", reason);
+      } else if (canonicalRows.duplicateIdentifiers.includes(identifier)) {
+        setRowResult(rowNumber, identifier, "failed", `Duplicate spreadsheet rows use identifier #${identifier}.`);
       }
     }
 
@@ -344,6 +372,7 @@ export default async function handler(req, res) {
       const identifier = String(row[3]).trim();
       const rowNumber = currentSheetRowNumber(rows, row);
       try {
+      let rowChanged = false;
       const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?user_id=eq.${encodeURIComponent(user.id)}&generation_identifier=eq.${encodeURIComponent(identifier)}&select=id,status,title,created_at,source_url,canonical_url,source,generation_identifier,generation_sheet_row,post_concepts(id,summary,post_type,panel_count,image_summary,caption,hashtags)`, { headers });
       if (!articleResponse.ok) throw new Error("Couldn’t load the matching app record.");
       const article = (await articleResponse.json())[0];
@@ -365,6 +394,7 @@ export default async function handler(req, res) {
         if (!articleUpdate.ok) throw new Error(`Couldn’t reconcile identifier #${identifier} with the Google Sheet.`);
         updatedArticleIds.push(article.id);
         statuses[article.id] = normalizedStatus.label;
+        rowChanged = true;
       }
       if (Number(article.generation_sheet_row || 0) !== rowNumber) {
         const rowPointerUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
@@ -373,6 +403,7 @@ export default async function handler(req, res) {
           body: JSON.stringify({ generation_sheet_row: rowNumber }),
         });
         if (!rowPointerUpdate.ok) throw new Error(`Couldn’t refresh the sheet row for identifier #${identifier}.`);
+        rowChanged = true;
       }
 
       // Reconcile every field shared by the spreadsheet and app before image
@@ -390,6 +421,7 @@ export default async function handler(req, res) {
         });
         if (!metadataUpdate.ok) throw new Error(`Couldn’t synchronize article fields for #${identifier}.`);
         if (!updatedArticleIds.includes(article.id)) updatedArticleIds.push(article.id);
+        rowChanged = true;
       }
 
       const currentContent = String(concept.image_summary?.content || "");
@@ -414,6 +446,7 @@ export default async function handler(req, res) {
         });
         if (!sharedConceptUpdate.ok) throw new Error(`Couldn’t synchronize content fields for #${identifier}.`);
         if (!updatedArticleIds.includes(article.id)) updatedArticleIds.push(article.id);
+        rowChanged = true;
       }
 
       const sourceImages = row.slice(12, 17).filter(Boolean);
@@ -441,11 +474,16 @@ export default async function handler(req, res) {
         status: sourceImages.length ? "pending" : "complete",
         expectedImages: sourceImages.length,
       });
+      setRowResult(
+        rowNumber,
+        identifier,
+        rowChanged ? "updated" : "already_synchronized",
+        rowChanged ? "App record reconciled with the spreadsheet." : "App record already matched the spreadsheet.",
+      );
       } catch (error) {
-        syncErrors.push({
-          identifier,
-          error: error instanceof Error ? error.message : "This row could not be synchronized.",
-        });
+        const reason = error instanceof Error ? error.message : "This row could not be synchronized.";
+        syncErrors.push({ identifier, error: reason });
+        setRowResult(rowNumber, identifier, "failed", reason);
       }
     }
 
@@ -487,6 +525,12 @@ export default async function handler(req, res) {
           if (JSON.stringify(savedImages) !== JSON.stringify(images)) {
             throw new Error(`Generated image links for #${identifier} did not verify after saving.`);
           }
+          setRowResult(
+            currentSheetRowNumber(rows, row),
+            identifier,
+            "updated",
+            "Generated image links and text were synchronized.",
+          );
         }
 
         if (!sourceImages.length || syncMode === "records") continue;
@@ -580,6 +624,12 @@ export default async function handler(req, res) {
           identifier,
           error: error instanceof Error ? error.message : "Generated images could not be synchronized.",
         });
+        setRowResult(
+          currentSheetRowNumber(rows, row),
+          identifier,
+          "failed",
+          error instanceof Error ? error.message : "Generated images could not be synchronized.",
+        );
       }
     }
     // Sheet repair is an explicit maintenance action. Normal pulls must never
@@ -591,15 +641,26 @@ export default async function handler(req, res) {
         restorationWarning = error instanceof Error ? error.message : "Sheet row restoration did not complete.";
       }
     }
+    const rowResults = finalizeRowResults(populatedRows, [...rowResultsByNumber.values()]);
+    const failedRowResults = rowResults.filter((result) => result.outcome === "failed");
+    for (const result of failedRowResults) {
+      if (!syncErrors.some((error) => error.identifier === result.identifier && error.error === result.reason)) {
+        syncErrors.push({ identifier: result.identifier, error: result.reason });
+      }
+    }
+    const resultCounts = rowResults.reduce((counts, result) => {
+      counts[result.outcome] = (counts[result.outcome] || 0) + 1;
+      return counts;
+    }, { updated: 0, already_synchronized: 0, failed: 0 });
     await finishSyncRun({
       supabaseUrl, headers, runId: run.id,
-      status: syncErrors.length || restorationWarning ? "partial" : "completed",
-      rowsProcessed: syncedRows.length,
-      rowsFailed: syncErrors.length,
+      status: failedRowResults.length || restorationWarning ? "partial" : "completed",
+      rowsProcessed: rowResults.length,
+      rowsFailed: failedRowResults.length,
       imagesImported: imagesImportedThisRun,
-      details: { syncMode, spreadsheetId, sheetDiagnostics, updatedArticleIds, restoredIdentifiers, restorationWarning, syncErrors },
+      details: { syncMode, spreadsheetId, sheetDiagnostics, updatedArticleIds, restoredIdentifiers, restorationWarning, resultCounts, rowResults, syncErrors },
     });
-    return res.status(200).json({ scheduled, syncMode, updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning, syncErrors });
+    return res.status(200).json({ scheduled, syncMode, updatedArticleIds, statuses, statusMismatches, imagesByArticleId, restoredIdentifiers, restorationWarning, resultCounts, rowResults, syncErrors });
   } catch (error) {
     await finishSyncRun({
       supabaseUrl, headers, runId: run?.id, status: "failed",
