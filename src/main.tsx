@@ -2143,9 +2143,11 @@ function normalizeHashtags(value: string) {
   return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 4);
 }
 function formatPanelContent(value: string) {
-  const firstPanel = value.search(/\bPanel\s*1\b/i);
-  const panelOnly = firstPanel >= 0 ? value.slice(firstPanel) : value;
-  return panelOnly
+  // Preserve author instructions before Panel 1. The previous formatter sliced
+  // everything before the first panel, so valid additions (for example,
+  // recurring character directions) appeared to save and then vanished when
+  // another field change reloaded the concept.
+  return value
     .replace(/\bHank\s*\(human\)/gi, "Hank")
     .replace(/(?:^|\n)\s*(?:Style|Voice)\s*:[\s\S]*?(?=\n\s*Panel\s+\d+\b|$)/gi, "")
     .replace(/\s+(?:Style|Voice)\s*:[\s\S]*$/gi, "")
