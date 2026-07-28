@@ -21,3 +21,9 @@ test("a missing sheet row re-enables repair and blocks generation", () => {
   assert.match(source, /promptRepairRequired \? "Repair Sheet Row First"/);
   assert.match(source, /setPromptReload\(\(value\) => value \+ 1\)/);
 });
+
+
+test("custom content before Panel 1 survives later field saves and reloads", () => {
+  assert.doesNotMatch(source, /value\.slice\(firstPanel\)/);
+  assert.match(source, /function formatPanelContent\(value: string\) \{[\s\S]*?return value[\s\S]*?\.trim\(\);/);
+});
