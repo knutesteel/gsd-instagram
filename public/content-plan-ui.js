@@ -3,10 +3,12 @@
   if (!DATA) return;
   const STORAGE_KEY = 'gsd-content-plan-edits-v1';
   const state = { tab: 'plan', search: '', category: '', format: '', cta: '', destination: '', status: '', ad: '', sort: 'Post #', direction: 1 };
-  const edits = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  let edits = {};
+  try { edits = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { edits = {}; }
   const statuses = ['Idea','Planned','Writing','Artwork','Review','Scheduled','Published','Performance Review','Evergreen Library','Archived'];
   let root = null;
   let hiddenNodes = [];
+  let visible = false;
 
   const escapeHtml = (v) => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
   const unique = (field) => [...new Set(DATA.posts.map(p => p[field]).filter(Boolean))].sort();
@@ -35,10 +37,17 @@
     const headers = ['Post #','Publish Date','Day','Category','Post Title','Concept','Format','Primary CTA','Destination','Status','Performance Notes','Ad Candidate'];
     const csv = [headers, ...rows.map(p => headers.map(h => h === 'Ad Candidate' ? ([1,38,69].includes(Number(p['Post #'])) ? 'Yes' : 'No') : (p[h] ?? '')))]
       .map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], {type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='gsd-content-plan-filtered.csv'; a.click(); URL.revokeObjectURL(a.href);
+    const blob = new Blob([csv], {type:'text/csv'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'gsd-content-plan-filtered.csv';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 0);
   }
   function summaryCards(){
-    const all = DATA.posts.map(getPost); const scheduled = all.filter(p=>['Scheduled','Published','Performance Review','Evergreen Library'].includes(p.Status)).length; const published=all.filter(p=>['Published','Performance Review','Evergreen Library'].includes(p.Status)).length;
+    const all = DATA.posts.map(getPost);
+    const scheduled = all.filter(p=>['Scheduled','Published','Performance Review','Evergreen Library'].includes(p.Status)).length;
+    const published = all.filter(p=>['Published','Performance Review','Evergreen Library'].includes(p.Status)).length;
     return `<div class="content-plan-cards">
       <div class="content-plan-card"><span>Total Posts</span><strong>${all.length}</strong></div>
       <div class="content-plan-card"><span>Scheduled</span><strong>${scheduled}</strong></div>
@@ -47,8 +56,8 @@
     </div>`;
   }
   function planView(){
-    const rows=filteredPosts();
-    const options=(vals,sel)=>`<option value="">All</option>${vals.map(v=>`<option ${v===sel?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
+    const rows = filteredPosts();
+    const options = (vals,sel) => `<option value="">All</option>${vals.map(v=>`<option value="${escapeHtml(v)}" ${v===sel?'selected':''}>${escapeHtml(v)}</option>`).join('')}`;
     return `${summaryCards()}<div class="content-plan-panel">
       <div class="content-plan-filters">
         <input data-filter="search" placeholder="Search all post ideas…" value="${escapeHtml(state.search)}">
@@ -63,7 +72,7 @@
         ${['Post #','Publish Date','Day','Category','Post Title','Concept','Format','Primary CTA','Destination','Status','Performance Notes','Ad Candidate'].map(h=>`<th data-sort="${h}">${h}${state.sort===h?(state.direction===1?' ▲':' ▼'):''}</th>`).join('')}
       </tr></thead><tbody>${rows.map(p=>`<tr>
         <td>${p['Post #']}</td><td>${escapeHtml(p['Publish Date'])}</td><td>${escapeHtml(p.Day)}</td><td><span class="content-plan-badge">${escapeHtml(p.Category)}</span></td><td><b>${escapeHtml(p['Post Title'])}</b></td><td>${escapeHtml(p.Concept)}</td><td>${escapeHtml(p.Format)}</td><td>${escapeHtml(p['Primary CTA'])}</td><td>${escapeHtml(p.Destination)}</td>
-        <td><select data-edit-status="${p['Post #']}">${statuses.map(s=>`<option ${s===p.Status?'selected':''}>${s}</option>`).join('')}</select></td>
+        <td><select data-edit-status="${p['Post #']}">${statuses.map(s=>`<option value="${s}" ${s===p.Status?'selected':''}>${s}</option>`).join('')}</select></td>
         <td><textarea data-edit-notes="${p['Post #']}" placeholder="Add performance notes…">${escapeHtml(p['Performance Notes']||'')}</textarea></td>
         <td>${[1,38,69].includes(Number(p['Post #']))?'<span class="content-plan-badge">Yes</span>':'No'}</td>
       </tr>`).join('')}</tbody></table></div>
@@ -74,7 +83,8 @@
     return `<div class="content-plan-panel"><h2>Recommended Content Mix</h2><p>The 100-post plan follows the approved executive dysfunction, ADHD, overwhelm, productivity, website, newsletter, book and app mix.</p>${DATA.mix.map(m=>`<div class="content-mix-row"><strong>${escapeHtml(m.category)}</strong><div class="content-mix-bar"><div class="content-mix-fill" style="width:${m.posts}%"></div></div><span>${m.posts} posts</span></div>`).join('')}</div>`;
   }
   function scheduleView(){
-    const byMonth={}; DATA.posts.map(getPost).forEach(p=>{const month=p['Publish Date'].slice(0,7);(byMonth[month]||(byMonth[month]=[])).push(p)});
+    const byMonth = {};
+    DATA.posts.map(getPost).forEach(p=>{const month=p['Publish Date'].slice(0,7);(byMonth[month]||(byMonth[month]=[])).push(p)});
     return `<div class="content-plan-grid"><div class="content-plan-panel"><h2>Weekly Posting Rhythm</h2>${DATA.rhythm.map(r=>`<div class="content-plan-schedule"><strong>${escapeHtml(r[0])}</strong><span>${escapeHtml(r[1])}</span></div>`).join('')}</div><div class="content-plan-panel"><h2>Plan by Month</h2>${Object.entries(byMonth).map(([m,posts])=>`<div class="content-plan-schedule"><strong>${new Date(m+'-01T12:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'})}</strong><span>${posts.length} posts · ${posts[0]['Publish Date']} through ${posts[posts.length-1]['Publish Date']}</span></div>`).join('')}</div></div>`;
   }
   function adsView(){
@@ -88,34 +98,72 @@
     bind();
   }
   function bind(){
-    root.querySelectorAll('[data-tab]').forEach(el=>el.onclick=()=>setTab(el.dataset.tab));
+    root.querySelectorAll('[data-tab]').forEach(el=>el.addEventListener('click',()=>setTab(el.dataset.tab)));
     root.querySelector('[data-action="export"]')?.addEventListener('click',exportCsv);
     root.querySelector('[data-action="print"]')?.addEventListener('click',()=>window.print());
-    root.querySelectorAll('[data-filter]').forEach(el=>el.oninput=()=>{state[el.dataset.filter]=el.value;render();});
-    root.querySelectorAll('[data-sort]').forEach(el=>el.onclick=()=>{const key=el.dataset.sort;if(state.sort===key)state.direction*=-1;else{state.sort=key;state.direction=1;}render();});
-    root.querySelectorAll('[data-edit-status]').forEach(el=>el.onchange=()=>saveEdit(el.dataset.editStatus,{Status:el.value}));
-    root.querySelectorAll('[data-edit-notes]').forEach(el=>el.onchange=()=>saveEdit(el.dataset.editNotes,{'Performance Notes':el.value}));
+    root.querySelectorAll('[data-filter]').forEach(el=>el.addEventListener(el.tagName==='INPUT'?'input':'change',()=>{state[el.dataset.filter]=el.value;render();}));
+    root.querySelectorAll('[data-sort]').forEach(el=>el.addEventListener('click',()=>{const key=el.dataset.sort;if(state.sort===key)state.direction*=-1;else{state.sort=key;state.direction=1;}render();}));
+    root.querySelectorAll('[data-edit-status]').forEach(el=>el.addEventListener('change',()=>saveEdit(el.dataset.editStatus,{Status:el.value})));
+    root.querySelectorAll('[data-edit-notes]').forEach(el=>el.addEventListener('change',()=>saveEdit(el.dataset.editNotes,{'Performance Notes':el.value})));
+  }
+  function ensureRoot(){
+    const main = document.querySelector('.main-content');
+    if (!main) return false;
+    if (!root || !root.isConnected) {
+      root = document.createElement('section');
+      root.className = 'content-plan-root';
+      root.setAttribute('aria-label','Content Plan');
+      main.appendChild(root);
+    }
+    return true;
   }
   function show(){
-    const main=document.querySelector('.main-content'); if(!main) return;
-    hiddenNodes=[...main.children].filter(n=>!n.classList.contains('content-plan-root'));
-    hiddenNodes.forEach(n=>n.dataset.contentPlanPrevDisplay=n.style.display||'', n.style.display='none');
-    root=document.createElement('section'); root.className='content-plan-root'; main.appendChild(root); render();
+    visible = true;
+    const main = document.querySelector('.main-content');
+    if(!main || !ensureRoot()) return;
+    hiddenNodes = [...main.children].filter(n=>n!==root);
+    hiddenNodes.forEach(n=>{ n.dataset.contentPlanPrevDisplay=n.style.display||''; n.style.display='none'; });
+    root.style.display='block';
+    render();
     document.querySelectorAll('.sidebar .nav-item').forEach(n=>n.classList.remove('active'));
     document.querySelector('.content-plan-nav')?.classList.add('active');
+    requestAnimationFrame(()=>root?.scrollIntoView({block:'start'}));
   }
   function hide(){
-    root?.remove(); root=null;
-    hiddenNodes.forEach(n=>n.style.display=n.dataset.contentPlanPrevDisplay||''); hiddenNodes=[];
+    visible = false;
+    if(root) root.style.display='none';
+    hiddenNodes.forEach(n=>n.style.display=n.dataset.contentPlanPrevDisplay||'');
+    hiddenNodes=[];
     document.querySelector('.content-plan-nav')?.classList.remove('active');
   }
   function install(){
-    const nav=document.querySelector('.sidebar nav'); if(!nav||document.querySelector('.content-plan-nav')) return false;
+    const nav=document.querySelector('.sidebar nav');
+    if(!nav) return false;
+    if(document.querySelector('.content-plan-nav')) return true;
     const insights=[...nav.querySelectorAll('button')].find(b=>b.textContent.trim()==='Instagram Insights');
-    const btn=document.createElement('button'); btn.className='nav-item content-plan-nav'; btn.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 4h16v16H4zM8 2v4M16 2v4M4 9h16M8 13h3M13 13h3M8 17h3"/></svg><span>Content Plan</span>';
-    btn.onclick=show; insights?.after(btn);
-    nav.addEventListener('click',e=>{const target=e.target.closest('button');if(target&&!target.classList.contains('content-plan-nav')) hide();},true);
+    if(!insights) return false;
+    const btn=document.createElement('button');
+    btn.type='button';
+    btn.className='nav-item content-plan-nav';
+    btn.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="2" d="M4 4h16v16H4zM8 2v4M16 2v4M4 9h16M8 13h3M13 13h3M8 17h3"/></svg><span>Content Plan</span>';
+    btn.addEventListener('click',event=>{
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      show();
+    }, true);
+    insights.after(btn);
+    nav.addEventListener('click',event=>{
+      const target=event.target.closest('button');
+      if(target && !target.classList.contains('content-plan-nav')) hide();
+    }, true);
     return true;
   }
-  const timer=setInterval(()=>{if(install())clearInterval(timer)},250);
+
+  const observer = new MutationObserver(()=>{
+    install();
+    if(visible){ ensureRoot(); show(); }
+  });
+  observer.observe(document.documentElement,{childList:true,subtree:true});
+  const timer=setInterval(()=>{ if(install()){ clearInterval(timer); ensureRoot(); if(root) root.style.display='none'; } },250);
 })();
