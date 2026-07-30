@@ -1,0 +1,45 @@
+name: Synchronization Regression
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "37 11 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  production-smoke:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    needs: regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify required secret
+        run: |
+          if [ -z "${{ secrets.SMOKE_AUTH_TOKEN }}" ]; then
+            echo "Repository secret SMOKE_AUTH_TOKEN is required for the authenticated production smoke test."
+            exit 1
+          fi
+      - name: Run production synchronization smoke test
+        env:
+          SMOKE_BASE_URL: https://gsd-instagram2.vercel.app
+          SMOKE_AUTH_TOKEN: ${{ secrets.SMOKE_AUTH_TOKEN }}
+        run: node scripts/production-sync-smoke.mjs
