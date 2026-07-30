@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 const path = new URL("../api/sync-sheet-generation.js", import.meta.url);
 const source = await readFile(path, "utf8");
 
-const original = `async function saveItemState({ supabaseUrl, headers, userId, articleId, identifier, stage, status, errorMessage = null, expectedImages = 0, importedImages = 0 }) {
+const original = String.raw`async function saveItemState({ supabaseUrl, headers, userId, articleId, identifier, stage, status, errorMessage = null, expectedImages = 0, importedImages = 0 }) {
   const failed = status === "failed";
   const now = new Date().toISOString();
   const response = await fetch(\`${supabaseUrl}/rest/v1/sheet_sync_items?on_conflict=user_id,article_id\`, {
@@ -28,7 +28,7 @@ const original = `async function saveItemState({ supabaseUrl, headers, userId, a
   if (!response.ok) throw new Error(\`Couldn’t save synchronization state for #${identifier}.\`);
 }`;
 
-const replacement = `async function saveItemState({ supabaseUrl, headers, userId, articleId, identifier, stage, status, errorMessage = null, expectedImages = 0, importedImages = 0 }) {
+const replacement = String.raw`async function saveItemState({ supabaseUrl, headers, userId, articleId, identifier, stage, status, errorMessage = null, expectedImages = 0, importedImages = 0 }) {
   const failed = status === "failed";
   const now = new Date().toISOString();
   const url = \`${supabaseUrl}/rest/v1/sheet_sync_items?on_conflict=user_id,article_id\`;
