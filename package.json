@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/patch-sync-state.mjs",
     "build": "tsc -b && vite build",
     "lint": "tsc -b --pretty false",
     "test": "node --test api/*.test.js"
