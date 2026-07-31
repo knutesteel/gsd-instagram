@@ -46,6 +46,7 @@ type Story = {
   id: string;
   title: string;
   createdAt: string | null;
+  postedAt: string | null;
   overview: string;
   category: string;
   source: string;
@@ -101,6 +102,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     id: row.id,
     title: row.title,
     createdAt: row.created_at ?? null,
+    postedAt: row.posted_at ?? null,
     generationIdentifier: row.generation_identifier ?? null,
     generationSheetRow: row.generation_sheet_row ?? null,
     url: isTextOverview ? "" : row.source_url ?? row.canonical_url ?? "",
@@ -152,7 +154,7 @@ function App() {
     if (!supabase) return [] as Story[];
     const { data, error } = await supabase
       .from("articles")
-      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,post_handoff_at,is_favorite,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
+      .select("id,title,created_at,posted_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,post_handoff_at,is_favorite,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
       .order("created_at", { ascending: false });
     if (error) throw new Error(`Couldn’t load your queue: ${error.message}`);
     const conceptIds = (data ?? []).map((row: any) => conceptFromArticle(row)?.id).filter(Boolean);
@@ -237,7 +239,7 @@ function App() {
     // One-time repair for any legacy app record. New and Archived records also
     // require durable identifiers even when they never reach Google Sheets.
     const needsIdentifierRepair = items.some((item) =>
-      !/^\d+$/.test(String(item.generationIdentifier ?? "").trim()),
+      !/^\d+(?:-\d+)?$/.test(String(item.generationIdentifier ?? "").trim()),
     );
     if (!supabase || !userId || !needsIdentifierRepair || normalizingIdentifiers.current) return;
     const client = supabase;
@@ -365,6 +367,18 @@ function App() {
     const { error } = await supabase.from("articles").update({ is_favorite: isFavorite }).eq("id", articleId);
     if (error) throw new Error(`Couldn’t update favorite: ${error.message}`);
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, isFavorite } : item));
+  };
+  const duplicateIdea = async (articleId: string) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { data, error } = await supabase.rpc("duplicate_article_idea", { source_article_id: articleId });
+    if (error) throw new Error(`Couldn’t duplicate this idea: ${error.message}`);
+    const duplicate = Array.isArray(data) ? data[0] : data;
+    if (!duplicate?.article_id) throw new Error("The duplicate was created without a record identifier.");
+    await loadStories();
+    setSelected(duplicate.article_id);
+    await loadConcept(duplicate.article_id);
+    setScreen("detail");
+    return duplicate as { article_id: string; generation_identifier: string };
   };
   const approveGeneratedContent = async (articleId: string) => {
     if (!supabase) return;
@@ -505,6 +519,7 @@ function App() {
             approveGeneratedContent={approveGeneratedContent}
             markPostHandoff={markPostHandoff}
             toggleFavorite={(isFavorite) => toggleFavorite(active.id, isFavorite)}
+            duplicateIdea={() => duplicateIdea(active.id)}
           />
         )}
         {screen === "insights" && <InstagramInsights notify={notify} />}
@@ -1557,7 +1572,13 @@ function ArticleList({
     group.push(item);
     all.set(item.status, group);
     return all;
-  }, new Map<Story["status"], Story[]>()),).sort(([a], [b]) => statusOrder.indexOf(a) - statusOrder.indexOf(b));
+  }, new Map<Story["status"], Story[]>()),)
+    .map(([status, stories]) => [status, status === "Posted" ? [...stories].sort((a, b) => {
+      const aTime = a.postedAt ? new Date(a.postedAt).getTime() : 0;
+      const bTime = b.postedAt ? new Date(b.postedAt).getTime() : 0;
+      return bTime - aTime;
+    }) : stories] as [Story["status"], Story[]])
+    .sort(([a], [b]) => statusOrder.indexOf(a) - statusOrder.indexOf(b));
   return <section>
     <header className="page-header">
       <div><h1>Generation Details</h1><p>Browse active items by status, then open any title to review its generation suggestions.</p></div>
@@ -1837,6 +1858,7 @@ function Detail({
   approveGeneratedContent,
   markPostHandoff,
   toggleFavorite,
+  duplicateIdea,
   notify,
 }: {
   story: Story;
@@ -1851,6 +1873,7 @@ function Detail({
   approveGeneratedContent: (articleId: string) => Promise<void>;
   markPostHandoff: (articleId: string) => Promise<void>;
   toggleFavorite: (isFavorite: boolean) => Promise<void>;
+  duplicateIdea: () => Promise<{ article_id: string; generation_identifier: string }>;
   notify: Notify;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
@@ -2083,6 +2106,7 @@ function Detail({
           </button>
           </div>
           <button type="button" className={`favorite-star detail-favorite ${story.isFavorite ? "active" : ""}`} aria-label={story.isFavorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={story.isFavorite} onClick={() => void toggleFavorite(!story.isFavorite).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update favorite.", "error"))}><FiStar /> {story.isFavorite ? "Favorite" : "Add favorite"}</button>
+          <button type="button" onClick={() => { setBusy("duplicate"); void duplicateIdea().then((created) => notify(`Duplicate #${created.generation_identifier} created.`)).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t duplicate this idea.", "error")).finally(() => setBusy("")); }} disabled={Boolean(busy)}><FiCopy /> {busy === "duplicate" ? "Duplicating…" : "Duplicate idea"}</button>
           <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select></label>
           <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
           {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}

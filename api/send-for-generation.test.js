@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { generationPromptFormula, locateGenerationRow, numericIdentifiersForSort, verifyGenerationValues } from "./send-for-generation.js";
+import { generationPromptFormula, locateGenerationRow, numericIdentifiersForSort, validGenerationIdentifier, verifyGenerationValues } from "./send-for-generation.js";
 
 test("locates an existing generation row by identifier only", () => {
   const rows = [["Date", "Status", "Title", "Identifier"], ["2026-07-22", "Pending", "Old title", "13"]];
@@ -35,4 +35,10 @@ test("normalizes identifiers to numbers so Priority sorts numerically descending
     numericIdentifiersForSort([["6"], ["3"], ["29"], [27], [""]]),
     [[6], [3], [29], [27], [""]],
   );
+});
+
+test("preserves numeric variant identifiers when sending an idea to the sheet", () => {
+  assert.equal(validGenerationIdentifier("32-1"), "32-1");
+  assert.equal(validGenerationIdentifier("32-12"), "32-12");
+  assert.equal(validGenerationIdentifier("32-a"), "");
 });

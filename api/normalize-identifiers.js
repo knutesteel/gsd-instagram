@@ -22,7 +22,7 @@ const titleKey = (value) => String(value || "").trim().toLocaleLowerCase();
 const urlKey = (value) => String(value || "").trim().toLocaleLowerCase().replace(/\/$/, "");
 const sheetValues = (article, identifier) => {
   const concept = conceptOf(article) || {};
-  return [[new Date().toISOString().slice(0, 10), "Pending", article.title || "", Number(identifier),
+  return [[new Date().toISOString().slice(0, 10), "Pending", article.title || "", String(identifier).includes("-") ? String(identifier) : Number(identifier),
     article.source_url || article.canonical_url || "", concept.summary || "", concept.panel_count || 1,
     ({ carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" }[concept.post_type] || concept.post_type || "Carousel"),
     concept.image_summary?.content || "", "", concept.caption || "", Array.isArray(concept.hashtags) ? concept.hashtags.slice(0, 4).join(" ") : "",
@@ -83,7 +83,7 @@ export default async function handler(req, res) {
     const claimedIdentifiers = new Set();
     for (const article of articles) {
       const stored = String(article.generation_identifier || "").trim();
-      if (/^\d+$/.test(stored) && Number(stored) > 0 && !claimedIdentifiers.has(stored)) {
+      if (/^\d+(?:-\d+)?$/.test(stored) && !claimedIdentifiers.has(stored)) {
         desiredId.set(article.id, stored);
         claimedIdentifiers.add(stored);
       }
@@ -98,7 +98,7 @@ export default async function handler(req, res) {
       const stored = String(article.generation_identifier || "").trim();
       const sheetValue = String(row[3] || "").trim();
       if (desiredId.has(article.id)) return;
-      if (/^\d+$/.test(sheetValue) && Number(sheetValue) > 0 && !claimedIdentifiers.has(sheetValue)) {
+      if (/^\d+(?:-\d+)?$/.test(sheetValue) && !claimedIdentifiers.has(sheetValue)) {
         desiredId.set(article.id, sheetValue);
         claimedIdentifiers.add(sheetValue);
       }
@@ -134,7 +134,7 @@ export default async function handler(req, res) {
       const article = uniqueByUrl.get(urlKey(row[4])) || uniqueByTitle.get(titleKey(row[2]));
       const identifier = article && desiredId.get(article.id);
       if (identifier && String(row[3] || "").trim() !== identifier) {
-        sheetIdUpdates.push({ range: `Sheet1!D${index + 2}`, values: [[Number(identifier)]] });
+        sheetIdUpdates.push({ range: `Sheet1!D${index + 2}`, values: [[String(identifier).includes("-") ? String(identifier) : Number(identifier)]] });
       }
     });
     if (sheetIdUpdates.length) {

@@ -49,7 +49,7 @@ const normalizeSheetStatus = (value) => {
 };
 const appStatusLabel = (value) => ({ sent_to_sheets: "Sent to Sheets", generated: "Generated", approved_to_post: "Approved", posted: "Posted", new: "New", discarded: "Archived" }[value] || String(value || "Unknown"));
 export const currentSheetRowNumber = (rows, row) => rows.indexOf(row) + 1;
-export const isNumericIdentifier = (value) => /^\d+$/.test(String(value ?? "").trim());
+export const isNumericIdentifier = (value) => /^\d+(?:-\d+)?$/.test(String(value ?? "").trim());
 export const uniqueNumericSheetRows = (rows) => {
   const byIdentifier = new Map();
   const duplicates = new Set();
@@ -142,26 +142,46 @@ async function finishSyncRun({ supabaseUrl, headers, runId, status, rowsProcesse
 async function saveItemState({ supabaseUrl, headers, userId, articleId, identifier, stage, status, errorMessage = null, expectedImages = 0, importedImages = 0 }) {
   const failed = status === "failed";
   const now = new Date().toISOString();
-  const response = await fetch(`${supabaseUrl}/rest/v1/sheet_sync_items?on_conflict=user_id,article_id`, {
-    method: "POST",
-    headers: { ...headers, Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify([{
-      user_id: userId,
-      article_id: articleId,
-      identifier: Number(identifier),
-      stage,
-      status,
-      error_message: errorMessage,
-      expected_images: expectedImages,
-      imported_images: importedImages,
-      last_attempt_at: now,
-      last_success_at: status === "complete" ? now : null,
-      next_retry_at: failed ? new Date(Date.now() + 10 * 60 * 1000).toISOString() : null,
-      retry_count: failed ? 1 : 0,
-      updated_at: now,
-    }]),
-  });
-  if (!response.ok) throw new Error(`Couldn’t save synchronization state for #${identifier}.`);
+  const url = `${supabaseUrl}/rest/v1/sheet_sync_items?on_conflict=user_id,article_id`;
+  const body = JSON.stringify([{
+    user_id: userId,
+    article_id: articleId,
+    identifier: String(identifier),
+    stage,
+    status,
+    error_message: errorMessage,
+    expected_images: expectedImages,
+    imported_images: importedImages,
+    last_attempt_at: now,
+    last_success_at: status === "complete" ? now : null,
+    next_retry_at: failed ? new Date(Date.now() + 10 * 60 * 1000).toISOString() : null,
+    retry_count: failed ? 1 : 0,
+    updated_at: now,
+  }]);
+  let response;
+  let detail = "";
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { ...headers, Prefer: "resolution=merge-duplicates,return=representation" },
+        body,
+      });
+      if (response.ok) {
+        const saved = await response.json().catch(() => []);
+        const row = Array.isArray(saved) ? saved[0] : null;
+        if (row && String(row.article_id) === String(articleId) && String(row.identifier) === String(identifier)) return;
+        detail = "Supabase accepted the write but did not return the expected audit row.";
+      } else {
+        detail = (await response.text().catch(() => "")).slice(0, 300);
+      }
+    } catch (error) {
+      detail = error instanceof Error ? error.message : "request failed";
+    }
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 200 * (2 ** (attempt - 1))));
+  }
+  const statusCode = response ? ` HTTP ${response.status}.` : "";
+  throw new Error(`Couldn’t save synchronization state for #${identifier}.${statusCode}${detail ? ` Supabase: ${detail}` : ""}`);
 }
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -309,7 +329,7 @@ export default async function handler(req, res) {
     // identifier from moving to Generated/Approved/Posted.
     let restoredIdentifiers = [];
     let restorationWarning = null;
-    // Numeric app identifiers are the sole synchronization key. Legacy letter
+    // Numeric and numeric-variant app identifiers are the sole synchronization keys. Legacy letter
     // values are repaired below; they are never queried as current identities.
     const canonicalRows = uniqueNumericSheetRows(rows);
     const syncedRows = canonicalRows.rows;
@@ -353,7 +373,7 @@ export default async function handler(req, res) {
       }));
     for (const { row, rowNumber, identifier, status } of populatedRows) {
       if (!isNumericIdentifier(identifier)) {
-        const reason = `Spreadsheet row ${rowNumber} has no valid numeric identifier.`;
+        const reason = `Spreadsheet row ${rowNumber} has no valid numeric or numeric-variant identifier.`;
         syncErrors.push({ identifier: identifier || `row ${rowNumber}`, error: reason });
         setRowResult(rowNumber, identifier, "failed", reason);
       } else if (!normalizeSheetStatus(status)) {

@@ -34,9 +34,11 @@ test("duplicate spreadsheet identifiers are removed from the sync set", () => {
   assert.deepEqual(result.rows.map((item) => item[3]), ["36"]);
 });
 
-test("invalid and variant identifiers are not treated as canonical numeric IDs", () => {
+test("numeric and variant identifiers are treated as canonical IDs", () => {
   assert.equal(isNumericIdentifier("35"), true);
-  assert.equal(isNumericIdentifier("35-1"), false);
+  assert.equal(isNumericIdentifier("35-1"), true);
+  assert.equal(isNumericIdentifier("35-12"), true);
+  assert.equal(isNumericIdentifier("35-a"), false);
   assert.equal(isNumericIdentifier(""), false);
   assert.equal(isNumericIdentifier(null), false);
 });
