@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { generationPromptFormula, locateGenerationRow, numericIdentifiersForSort, verifyGenerationValues } from "./send-for-generation.js";
+import { easternSheetDate, generationPromptFormula, locateGenerationRow, numericIdentifiersForSort, verifyGenerationValues } from "./send-for-generation.js";
 
 test("locates an existing generation row by identifier only", () => {
   const rows = [["Date", "Status", "Title", "Identifier"], ["2026-07-22", "Pending", "Old title", "13"]];
@@ -35,4 +35,9 @@ test("normalizes identifiers to numbers so Priority sorts numerically descending
     numericIdentifiersForSort([["6"], ["3"], ["29"], [27], [""]]),
     [[6], [3], [29], [27], [""]],
   );
+});
+
+
+test("formats the sheet date as an accepted US calendar date in Eastern time", () => {
+  assert.equal(easternSheetDate(new Date("2026-07-27T02:30:00.000Z")), "07/26/2026");
 });
