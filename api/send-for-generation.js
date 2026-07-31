@@ -33,6 +33,7 @@ const typeLabel = (postType) => {
   const names = { carousel: "Carousel", single_image: "Single Image", multi_pane_cartoon: "Multi-pane Cartoon", reel: "Reel" };
   return names[postType] || postType || "Carousel";
 };
+export const validGenerationIdentifier = (value) => /^\d+(?:-\d+)?$/.test(String(value || "").trim()) ? String(value).trim() : "";
 const numericIdentifier = (value) => /^\d+$/.test(String(value || "").trim()) ? String(value).trim() : "";
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 async function googleFetch(url, options, operation) {
@@ -207,7 +208,7 @@ export default async function handler(req, res) {
     const databaseIdentifiers = (await identifiersResponse.json()).map((row) => row.generation_identifier);
     // The app/database identifier is authoritative. A legacy Sheet identifier
     // is used only when the app record does not yet have a numeric identifier.
-    identifier = numericIdentifier(article.generation_identifier)
+    identifier = validGenerationIdentifier(article.generation_identifier)
       || await nextSequentialIdentifier(accessToken, databaseIdentifiers);
     stage = "locate-row";
     const sheetRows = await generationSheetRows(accessToken);
@@ -221,7 +222,7 @@ export default async function handler(req, res) {
       new Date().toISOString().slice(0, 10),
       "Pending",
       article.title,
-      Number(identifier),
+      identifier.includes("-") ? identifier : Number(identifier),
       url,
       concept.summary,
       concept.panel_count || 1,
