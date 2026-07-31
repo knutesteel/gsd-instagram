@@ -37,7 +37,7 @@ export default async function handler(req, res) {
     const duplicateConcepts = [...conceptCounts.values()].filter((count) => count > 1).length;
     const invalidSyncItems = syncItems.filter((item) => {
       const article = articleById.get(item.article_id);
-      return !article || article.user_id !== item.user_id || Number(article.generation_identifier) !== Number(item.identifier);
+      return !article || article.user_id !== item.user_id || String(article.generation_identifier) !== String(item.identifier);
     }).length;
     const failedSyncItems = syncItems.filter((item) => item.status === "failed").length;
     const incompleteAssets = syncItems.filter((item) => Number(item.expected_images || 0) > Number(item.imported_images || 0) && item.status === "complete").length;
