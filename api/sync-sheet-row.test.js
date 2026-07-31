@@ -21,9 +21,10 @@ test("derives the current sheet row after sorting instead of trusting a cached p
   assert.equal(currentSheetRowNumber(rows, rows[2]), 3);
 });
 
-test("uses only the new numeric identifier for synchronization", () => {
+test("uses numeric and numeric-variant identifiers for synchronization", () => {
   assert.equal(isNumericIdentifier("29"), true);
   assert.equal(isNumericIdentifier(29), true);
+  assert.equal(isNumericIdentifier("29-1"), true);
   assert.equal(isNumericIdentifier("WFCSHQ"), false);
   assert.equal(isNumericIdentifier(""), false);
 });
