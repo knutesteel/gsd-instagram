@@ -142,12 +142,11 @@
     if(!nav) return false;
     let btn=document.querySelector('.instructions-nav');
     if(!btn){
-      const dashboard=[...nav.querySelectorAll('button')].find(b=>b.textContent.trim()==='Dashboard');
       btn=document.createElement('button');
       btn.type='button';
       btn.className='nav-item instructions-nav';
       btn.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true" width="20" height="20"><path fill="none" stroke="currentColor" stroke-width="2" d="M5 3h14v18H5zM8 7h8M8 11h8M8 15h5"/></svg><span>Instructions</span>';
-      dashboard?.after(btn);
+      nav.prepend(btn);
     }
     btn.addEventListener('click',show,true);
     nav.addEventListener('click',e=>{
