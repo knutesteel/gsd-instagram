@@ -55,7 +55,7 @@ type Story = {
   score: number;
   url?: string;
   type: string;
-  status: "New" | "Sent to Sheets" | "Generated" | "Approved" | "Posted" | "Archived";
+  status: "New" | "Auto-Added" | "Sent to Sheets" | "Generated" | "Approved" | "Posted" | "Archived";
   generationIdentifier?: string | null;
   generationSheetRow?: number | null;
   featuredImage?: string | null;
@@ -115,7 +115,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     type: postConcept?.post_type ?? "carousel",
     featuredImage: featuredImageOverride || embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
     featuredImageFallback: sheetImage ? directImageFallback(sheetImage) : null,
-    status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : row.status === "posted" ? "Posted" : "New") as Story["status"],
+    status: (row.status === "discarded" ? "Archived" : row.status === "auto_added" ? "Auto-Added" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : row.status === "posted" ? "Posted" : "New") as Story["status"],
   };
 }
 
@@ -264,7 +264,7 @@ function App() {
       }
     });
   }, [userId, items]);
-  const updateStatus = async (id: string, status: "discarded" | "new" | "sent_to_sheets" | "generated" | "approved_to_post" | "posted") => {
+  const updateStatus = async (id: string, status: "discarded" | "new" | "auto_added" | "sent_to_sheets" | "generated" | "approved_to_post" | "posted") => {
     if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
     if (error) throw new Error(`Couldn’t save change: ${error.message}`);
@@ -1472,26 +1472,24 @@ function Dashboard({
   const [category, setCategory] = useState("all");
   const [type, setType] = useState("all");
   const [minimumScore, setMinimumScore] = useState("0");
-  const [dateSort, setDateSort] = useState<"newest" | "oldest">("newest");
+  const [sortField, setSortField] = useState<"identifier" | "date" | "status" | "score">("date");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [favoriteFilter, setFavoriteFilter] = useState<"all" | "favorites" | "not-favorites">("all");
   const shown = items
     .filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore) && (statusFilter === "all" || i.status === statusFilter) && (favoriteFilter === "all" || (favoriteFilter === "favorites" ? i.isFavorite : !i.isFavorite)))
     .sort((a, b) => {
-      const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateSort === "newest" ? bDate - aDate : aDate - bDate;
+      const statusOrder: Array<Story["status"]> = ["Auto-Added", "New", "Sent to Sheets", "Generated", "Approved", "Posted", "Archived"];
+      const comparison = sortField === "identifier"
+        ? String(a.generationIdentifier ?? "").localeCompare(String(b.generationIdentifier ?? ""), undefined, { numeric: true })
+        : sortField === "date"
+          ? (a.createdAt ? new Date(a.createdAt).getTime() : 0) - (b.createdAt ? new Date(b.createdAt).getTime() : 0)
+          : sortField === "status"
+            ? statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status)
+            : a.score - b.score;
+      return sortDirection === "asc" ? comparison : -comparison;
     });
   const categories = [...new Set(items.map((item) => item.category))];
   const types = [...new Set(items.map((item) => item.type))];
-  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Posted", "Archived"];
-  const groupedStories = Array.from(
-    shown.reduce((groups, item) => {
-      const stories = groups.get(item.status) ?? [];
-      stories.push(item);
-      groups.set(item.status, stories);
-      return groups;
-    }, new Map<Story["status"], Story[]>()),
-  ).sort(([firstStatus], [secondStatus]) => statusOrder.indexOf(firstStatus) - statusOrder.indexOf(secondStatus));
   return (
     <section>
       <header className="page-header">
@@ -1528,9 +1526,10 @@ function Dashboard({
         <select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select value={minimumScore} onChange={(e) => setMinimumScore(e.target.value)}><option value="0">Any score</option><option value="90">90+</option><option value="75">75+</option><option value="60">60+</option></select>
         <select value={type} onChange={(e) => setType(e.target.value)}><option value="all">All post types</option>{types.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | Story["status"])} aria-label="Filter by status"><option value="all">All statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option></select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | Story["status"])} aria-label="Filter by status"><option value="all">All statuses</option><option>Auto-Added</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option></select>
         <select value={favoriteFilter} onChange={(e) => setFavoriteFilter(e.target.value as "all" | "favorites" | "not-favorites")} aria-label="Filter by favorite"><option value="all">All items</option><option value="favorites">Favorites</option><option value="not-favorites">Not favorites</option></select>
-        <select value={dateSort} onChange={(e) => setDateSort(e.target.value as "newest" | "oldest")} aria-label="Sort by date added"><option value="newest">Date added: Newest first</option><option value="oldest">Date added: Oldest first</option></select>
+        <select value={sortField} onChange={(e) => setSortField(e.target.value as typeof sortField)} aria-label="Sort dashboard"><option value="identifier">Sort by identifier</option><option value="date">Sort by date added</option><option value="status">Sort by status</option><option value="score">Sort by score</option></select>
+        <select value={sortDirection} onChange={(e) => setSortDirection(e.target.value as "asc" | "desc")} aria-label="Sort direction"><option value="desc">Descending</option><option value="asc">Ascending</option></select>
       </div>
       <div className="story-table">
         <div className="story-head">
@@ -1544,9 +1543,7 @@ function Dashboard({
           <span>Actions</span>
         </div>
         {shown.length === 0 && <div className="empty-queue"><FiCompass /><h2>No stories in your queue yet</h2><p>Use Discover to find fresh, high-fit stories. Your discarded items remain protected from duplicates.</p><button className="button primary" onClick={discover}>Find fresh stories</button></div>}
-        {groupedStories.map(([categoryName, stories]) => <React.Fragment key={categoryName}>
-          <div className="category-group-heading"><b>{categoryName}</b><span>{stories.length} {stories.length === 1 ? "story" : "stories"}</span></div>
-          {stories.map((item) => (
+        {shown.map((item) => (
             <div className="story-row" key={item.id}>
               <div>
                 <h3><button type="button" className={`favorite-star ${item.isFavorite ? "active" : ""}`} aria-label={item.isFavorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={item.isFavorite} onClick={() => toggleFavorite(item.id, !item.isFavorite)}><FiStar /></button><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
@@ -1557,13 +1554,12 @@ function Dashboard({
               <div><span className="chip">{item.category}</span>{item.source && <small className="story-source">{item.source}</small>}{item.postHandoffAt && item.status !== "Posted" && <span className="posted-question-pill">Posted?</span>}</div>
               <span className="score">{item.score}</span>
               <span className="type">{item.type}</span>
-              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select>
+              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>Auto-Added</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select>
               <div className="actions">
                 {item.status === "Generated" && <button className="button compact primary" onClick={() => approve(item.id)}><FiCheck /> Approve</button>}
               </div>
             </div>
           ))}
-        </React.Fragment>)}
       </div>
     </section>
   );
@@ -1580,7 +1576,7 @@ function ArticleList({
   setStatusFilter: (value: "all" | Story["status"]) => void;
   select: (id: string) => void;
 }) {
-  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Posted"];
+  const statusOrder: Array<Story["status"]> = ["Auto-Added", "New", "Sent to Sheets", "Generated", "Approved", "Posted"];
   const shown = items.filter((item) => item.status !== "Archived" && (statusFilter === "all" || item.status === statusFilter));
   const groups = Array.from(shown.reduce((all, item) => {
     const group = all.get(item.status) ?? [];
@@ -1600,7 +1596,7 @@ function ArticleList({
     </header>
     <div className="filter-row article-list-filter">
       <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | Story["status"])} aria-label="Filter articles by status">
-        <option value="all">All active statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option>
+        <option value="all">All active statuses</option><option>Auto-Added</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option>
       </select>
     </div>
     <div className="article-list">
@@ -2122,7 +2118,7 @@ function Detail({
           </div>
           <button type="button" className={`favorite-star detail-favorite ${story.isFavorite ? "active" : ""}`} aria-label={story.isFavorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={story.isFavorite} onClick={() => void toggleFavorite(!story.isFavorite).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update favorite.", "error"))}><FiStar /> {story.isFavorite ? "Favorite" : "Add favorite"}</button>
           <button type="button" onClick={() => { setBusy("duplicate"); void duplicateIdea().then((created) => notify(`Duplicate #${created.generation_identifier} created.`)).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t duplicate this idea.", "error")).finally(() => setBusy("")); }} disabled={Boolean(busy)}><FiCopy /> {busy === "duplicate" ? "Duplicating…" : "Duplicate idea"}</button>
-          <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select></label>
+          <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>Auto-Added</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select></label>
           <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
           {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}
           <button onClick={rerun} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : isTextOverview ? "Regenerate suggestion" : "Regenerate analysis"}</button>
