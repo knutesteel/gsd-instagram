@@ -137,7 +137,7 @@ export default async function handler(req, res) {
       synchronized: Boolean(sheetRow),
       sheetRow,
       verified: true,
-      repairRequired: Boolean(article.generation_identifier && !sheetRow && article.status !== "new" && article.status !== "discarded"),
+      repairRequired: Boolean(article.generation_identifier && !sheetRow && article.status !== "new" && article.status !== "auto_added" && article.status !== "discarded"),
     });
   } catch (error) {
     return res.status(502).json({ error: error instanceof Error ? error.message : "Couldn’t synchronize article changes." });
