@@ -449,6 +449,15 @@ function App() {
               <span>{n.label}</span>
             </button>
           ))}
+          <a
+            className="nav-item"
+            href="https://hank-squirrel-collaborations.knutesteel.chatgpt.site/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <FiUsers />
+            <span>Collaborations</span>
+          </a>
         </nav>
         <div className="sidebar-footer">
           <div className="voice-dot">G</div>
