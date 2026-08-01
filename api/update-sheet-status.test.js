@@ -10,6 +10,11 @@ test("archiving an identifier checks for and preserves its sheet row", () => {
   assert.equal(statusRequiresSheetLookup("Archived", true), true);
 });
 
+test("auto-added intake status never creates or changes a Google Sheet row", () => {
+  assert.equal(statusRequiresSheetLookup("Auto-Added"), false);
+  assert.equal(statusRequiresSheetLookup("Auto-Added", true), false);
+});
+
 test("sheet-backed workflow statuses still reconcile with Google Sheets", () => {
   for (const status of ["New", "Sent to Sheets", "Generated", "Approved", "Posted"]) {
     assert.equal(statusRequiresSheetLookup(status), true);
