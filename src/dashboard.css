@@ -627,3 +627,7 @@
   border-radius: 9px;
   gap: 7px;
 }
+@media (max-width: 600px) {
+  .sidebar nav { display: grid; flex: none; }
+  .nav-archive { margin-top: 0; }
+}
