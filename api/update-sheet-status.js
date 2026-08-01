@@ -6,6 +6,7 @@ const spreadsheetId = "1Rl-vNbEXGpXoV5Pf9aNXsw4N4VSbjJqDcmtUrt_e7kQ";
 const base64Url = (value) => Buffer.from(value).toString("base64url");
 const statusMap = {
   New: { app: "new", sheet: "New" },
+  "Auto-Added": { app: "auto_added", sheet: null },
   "Sent to Sheets": { app: "sent_to_sheets", sheet: "Pending" },
   Generated: { app: "generated", sheet: "Generated" },
   Approved: { app: "approved_to_post", sheet: "Approved" },
@@ -14,7 +15,7 @@ const statusMap = {
 };
 
 export const statusRequiresSheetLookup = (status, hasIdentifier = false) =>
-  status !== "Archived" || hasIdentifier;
+  status !== "Auto-Added" && (status !== "Archived" || hasIdentifier);
 
 async function googleAccessToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
