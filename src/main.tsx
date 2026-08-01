@@ -1742,7 +1742,10 @@ function Discover({
   const promptEdited = searchText.trim() !== savedSearchPrompt.trim();
   const addTopic = () => { const value = topicInput.trim(); if (value && !topics.includes(value)) setTopics([...topics, value]); setTopicInput(""); };
   const run = async (savePrompt = false) => {
-    if (mode === "manual" && !/^https?:\/\//i.test(manualUrl.trim())) return notify("Paste a complete article URL, starting with https://.");
+    const manualUrls = Array.from(new Set(manualUrl.split(/[\s,]+/).map((url) => url.trim()).filter(Boolean)));
+    if (mode === "manual" && manualUrls.length === 0) return notify("Paste at least one complete article URL, starting with https://.");
+    const invalidManualUrls = manualUrls.filter((url) => !/^https:\/\//i.test(url));
+    if (mode === "manual" && invalidManualUrls.length === manualUrls.length) return notify("Paste at least one complete HTTPS article URL.");
     if (mode === "overview" && !overview.trim()) return notify("Add a text overview to generate a suggested post.");
     if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search prompt or at least one topic.");
     if (mode === "system" && savePrompt) {
@@ -1752,10 +1755,25 @@ function Discover({
     }
     setSearching(true);
     try {
+      if (mode === "manual") {
+        const validManualUrls = manualUrls.filter((url) => /^https:\/\//i.test(url));
+        const results = await Promise.allSettled(validManualUrls.map((url) => research({ mode, manualUrl: url })));
+        const successful = results
+          .filter((result): result is PromiseFulfilledResult<{ count: number; articleIds?: string[] }> => result.status === "fulfilled")
+          .map((result) => result.value);
+        const failedCount = results.length - successful.length + invalidManualUrls.length;
+        const addedCount = successful.reduce((sum, result) => sum + result.count, 0);
+        const firstArticleId = successful.flatMap((result) => result.articleIds ?? [])[0];
+        setQueued([`${validManualUrls.length} URLs processed`, `${addedCount} ${addedCount === 1 ? "story" : "stories"} added`, failedCount ? `${failedCount} failed or invalid` : "All URLs completed"]);
+        if (firstArticleId) onManualComplete(firstArticleId);
+        if (failedCount) notify(`${addedCount} ${addedCount === 1 ? "story" : "stories"} added; ${failedCount} URL${failedCount === 1 ? "" : "s"} could not be processed.`);
+        else notify(`${addedCount} ${addedCount === 1 ? "story" : "stories"} added to your dashboard.`);
+        return;
+      }
       const result = await research({ mode, manualUrl: manualUrl.trim(), overview: overview.trim(), source: source.trim(), searchText: searchText.trim(), topics });
-      setQueued(mode === "manual" || mode === "overview" ? [mode === "overview" ? "Overview interpreted" : "Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
+      setQueued(mode === "overview" ? ["Overview interpreted", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
       notify(`${result.count} ${result.count === 1 ? "story" : "stories"} added to your dashboard.`);
-      if ((mode === "manual" || mode === "overview") && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
+      if (mode === "overview" && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
     } catch (error) { notify(error instanceof Error ? error.message : "Research failed."); }
     finally { setSearching(false); }
   };
@@ -1777,7 +1795,7 @@ function Discover({
             <button className={mode === "overview" ? "selected" : ""} onClick={() => setMode("overview")}>Text overview</button>
             <button className={mode === "system" ? "selected" : ""} onClick={() => setMode("system")}>System Search</button>
           </div>
-          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <><Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field><Field label="Source"><input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Where this idea came from" /></Field></> : <><Field label="What should we search for?"><textarea className="overview-editor" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Describe the stories the system should find." /></Field>
+          {mode === "manual" ? <Field label="Article URLs"><textarea className="overview-editor" value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder={"https://example.com/article-one\nhttps://example.com/article-two"} /></Field> : mode === "overview" ? <><Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field><Field label="Source"><input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Where this idea came from" /></Field></> : <><Field label="What should we search for?"><textarea className="overview-editor" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Describe the stories the system should find." /></Field>
           <p className="field-label">Topics</p>
           <div className="chips">
             {topics.map((topic) => <span key={topic}>{topic} <button aria-label={`Remove ${topic}`} onClick={() => setTopics(topics.filter((item) => item !== topic))}><FiX /></button></span>)}
