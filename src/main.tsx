@@ -437,7 +437,6 @@ function App() {
               { key: "discover", icon: <FiCompass />, label: "Discover" },
               { key: "articles", icon: <FiFileText />, label: "Generation Details" },
               { key: "insights", icon: <FiBarChart2 />, label: "Instagram Insights" },
-              { key: "archive", icon: <FiArchive />, label: "Archive" },
             ] as const
           ).map((n) => (
             <button
@@ -458,6 +457,13 @@ function App() {
             <FiUsers />
             <span>Collaborations</span>
           </a>
+          <button
+            className={screen === "archive" ? "nav-item nav-archive active" : "nav-item nav-archive"}
+            onClick={() => setScreen("archive")}
+          >
+            <FiArchive />
+            <span>Archive</span>
+          </button>
         </nav>
         <div className="sidebar-footer">
           <div className="voice-dot">G</div>
