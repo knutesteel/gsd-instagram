@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 const jsonHeaders = { "Content-Type": "application/json" };
 const STATUS_LABELS = {
+  auto_added: "Auto-Added",
   new: "New",
   sent_to_sheets: "Sent to Sheets",
   generated: "Generated",
