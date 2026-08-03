@@ -455,7 +455,16 @@ function App() {
             rel="noreferrer"
           >
             <FiUsers />
-            <span>Collaborations</span>
+            <span>Collaboration Plan</span>
+          </a>
+          <a
+            className="nav-item"
+            href="https://gsd-retail-plan.knutesteel.chatgpt.site/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <FiExternalLink />
+            <span>Retail Plan</span>
           </a>
           <button
             className={screen === "archive" ? "nav-item nav-archive active" : "nav-item nav-archive"}
