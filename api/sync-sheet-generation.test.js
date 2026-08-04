@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  appConceptDiffersFromSheet,
   countImportedImages,
   finalizeRowResults,
   firstMissingImageSequence,
@@ -85,4 +86,30 @@ test("scheduled synchronization requires one unambiguous owner", () => {
   assert.equal(uniqueSheetOwner([{ user_id: "owner" }, { user_id: "owner" }]), "owner");
   assert.throws(() => uniqueSheetOwner([]), /could not find a sheet owner/);
   assert.throws(() => uniqueSheetOwner([{ user_id: "a" }, { user_id: "b" }]), /one unambiguous sheet owner/);
+});
+
+test("regenerated app content is detected before an older sheet version can overwrite it", () => {
+  const concept = {
+    summary: "New summary",
+    panel_count: 5,
+    post_type: "carousel",
+    image_summary: { content: "New regenerated content" },
+    caption: "New caption",
+    hashtags: ["#gsd-book", "#focus"],
+  };
+  const oldSheet = {
+    summary: "Old summary",
+    panel_count: 5,
+    post_type: "carousel",
+    content: "Old content",
+    caption: "Old caption",
+    hashtags: ["#gsd-book", "#focus"],
+  };
+  assert.equal(appConceptDiffersFromSheet(concept, oldSheet), true);
+  assert.equal(appConceptDiffersFromSheet(concept, {
+    ...oldSheet,
+    summary: concept.summary,
+    content: concept.image_summary.content,
+    caption: concept.caption,
+  }), false);
 });
