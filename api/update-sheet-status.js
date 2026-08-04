@@ -14,8 +14,24 @@ const statusMap = {
   Archived: { app: "discarded", sheet: "Archived" },
 };
 
-export const statusRequiresSheetLookup = (status, hasIdentifier = false) =>
-  status !== "Auto-Added" && (status !== "Archived" || hasIdentifier);
+export const statusRequiresSheetLookup = (status, currentStatus = "new", hasSheetRow = false) => {
+  if (status === "Auto-Added") return false;
+
+  // Identifiers are assigned to every app record, including intake items that
+  // have never been sent to Sheets. New and Auto-Added items therefore archive
+  // entirely in the app. A saved sheet row (or a sheet-backed workflow status)
+  // still requires reconciliation so existing rows stay synchronized.
+  if (status === "Archived") {
+    return hasSheetRow || !["new", "auto_added"].includes(currentStatus);
+  }
+
+  // Restoring an app-only archived item must not invent a Sheet dependency.
+  if (status === "New" && currentStatus === "discarded" && !hasSheetRow) {
+    return false;
+  }
+
+  return true;
+};
 
 async function googleAccessToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -54,7 +70,7 @@ export default async function handler(req, res) {
   const user = await userResponse.json();
 
   try {
-    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,generation_identifier,generation_sheet_row`, { headers });
+    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,status,generation_identifier,generation_sheet_row`, { headers });
     if (!articleResponse.ok) throw new Error("Couldn’t find the article.");
     const article = (await articleResponse.json())[0];
     if (!article) return res.status(404).json({ error: "Article not found." });
@@ -62,7 +78,7 @@ export default async function handler(req, res) {
     // A brand-new article can be archived without touching Sheets. If the
     // article has an identifier, remove any matching sheet row by Identifier;
     // a missing row is valid and does not block archiving.
-    if (!statusRequiresSheetLookup(status, Boolean(article.generation_identifier))) {
+    if (!statusRequiresSheetLookup(status, article.status, Boolean(article.generation_sheet_row))) {
       const archiveUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}`, {
         method: "PATCH",
         headers: { ...headers, Prefer: "return=minimal" },
