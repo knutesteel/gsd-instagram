@@ -18,7 +18,20 @@
 
 .story-head,
 .story-row {
-  grid-template-columns: 2.7fr 0.8fr 1.05fr 1.3fr 0.65fr 1fr 0.9fr 1.25fr;
+  grid-template-columns: 0.8fr 1.05fr 1.3fr 0.65fr 1fr 0.9fr 1.25fr;
+}
+
+.story-head > span:first-child,
+.story-row > div:first-child {
+  grid-column: 1 / -1;
+}
+
+.story-head > span:first-child {
+  padding-bottom: 2px;
+}
+
+.story-row > div:first-child {
+  padding-bottom: 4px;
 }
 
 .identifier-link {
@@ -626,4 +639,8 @@
   padding: 0 12px;
   border-radius: 9px;
   gap: 7px;
+}
+@media (max-width: 600px) {
+  .sidebar nav { display: grid; flex: none; }
+  .nav-archive { margin-top: 0; }
 }

@@ -1,0 +1,53 @@
+name: Synchronization Regression
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "37 11 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  production-smoke:
+    needs: regression
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for production and verify synchronization health
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://gsd-instagram2.vercel.app/api/sync-health"
+          for attempt in $(seq 1 20); do
+            status=$(curl --silent --show-error --output sync-health.json --write-out "%{http_code}" "$url" || true)
+            cat sync-health.json 2>/dev/null || true
+            if [ "$status" = "200" ]; then
+              node -e '
+                const fs = require("fs");
+                const result = JSON.parse(fs.readFileSync("sync-health.json", "utf8"));
+                if (!result.healthy) process.exit(1);
+                if (!result.latestRun || result.latestRun.rowsFailed !== 0) process.exit(1);
+                const failures = Object.values(result.counts || {}).reduce((sum, value) => sum + Number(value || 0), 0);
+                if (failures !== 0) process.exit(1);
+              '
+              exit 0
+            fi
+            echo "Health endpoint returned HTTP $status on attempt $attempt; retrying..."
+            sleep 15
+          done
+          echo "Production synchronization health did not become healthy."
+          exit 1

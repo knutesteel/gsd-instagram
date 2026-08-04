@@ -8,9 +8,11 @@
   },
   "scripts": {
     "dev": "vite",
+    "prebuild": "node scripts/patch-sync-state.mjs",
     "build": "tsc -b && vite build",
     "lint": "tsc -b --pretty false",
-    "test": "node --test api/*.test.js"
+    "test": "node --test api/*.test.js",
+    "smoke:production": "node scripts/production-sync-smoke.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.110.7",

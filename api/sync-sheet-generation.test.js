@@ -1,0 +1,125 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  appConceptDiffersFromSheet,
+  countImportedImages,
+  finalizeRowResults,
+  firstMissingImageSequence,
+  isNumericIdentifier,
+  oneRelatedRecord,
+  uniqueNumericSheetRows,
+  uniqueSheetOwner,
+  validateGenerationSheet,
+} from "./sync-sheet-generation.js";
+
+const header = ["Created", "Status", "Article Title", "Identifier"];
+const row = (identifier, status = "Generated") => ["2026-07-30", status, `Title ${identifier}`, String(identifier)];
+
+test("generation sheet validation rejects a truncated response", () => {
+  assert.throws(() => validateGenerationSheet([header, row(1)]), /returned only 1 identified rows/);
+});
+
+test("generation sheet validation accepts a complete numeric data set", () => {
+  const rows = [header, ...Array.from({ length: 10 }, (_, index) => row(index + 1))];
+  assert.deepEqual(validateGenerationSheet(rows), {
+    totalDataRows: 10,
+    numericRows: 10,
+    firstIdentifier: "1",
+  });
+});
+
+test("duplicate spreadsheet identifiers are removed from the sync set", () => {
+  const rows = [header, row(35), row(35), row(36)];
+  const result = uniqueNumericSheetRows(rows);
+  assert.deepEqual(result.duplicateIdentifiers, ["35"]);
+  assert.deepEqual(result.rows.map((item) => item[3]), ["36"]);
+});
+
+test("numeric and variant identifiers are treated as canonical IDs", () => {
+  assert.equal(isNumericIdentifier("35"), true);
+  assert.equal(isNumericIdentifier("35-1"), true);
+  assert.equal(isNumericIdentifier("35-12"), true);
+  assert.equal(isNumericIdentifier("35-a"), false);
+  assert.equal(isNumericIdentifier(""), false);
+  assert.equal(isNumericIdentifier(null), false);
+});
+
+test("every populated row receives an explicit result", () => {
+  const populatedRows = [
+    { rowNumber: 2, identifier: "35" },
+    { rowNumber: 3, identifier: "36" },
+  ];
+  const results = finalizeRowResults(populatedRows, [{
+    rowNumber: 2,
+    identifier: "35",
+    outcome: "already_synchronized",
+    reason: "Matched",
+  }]);
+  assert.equal(results.length, 2);
+  assert.equal(results[0].outcome, "already_synchronized");
+  assert.equal(results[1].outcome, "failed");
+  assert.match(results[1].reason, /not processed/);
+});
+
+test("image resume logic imports only missing sequences", () => {
+  const sourceImages = ["one", "two", "three", "four"];
+  const assets = [{ sequence: 1 }, { sequence: 3 }];
+  assert.equal(firstMissingImageSequence(sourceImages, assets), 2);
+  assert.equal(countImportedImages(sourceImages, assets), 2);
+});
+
+test("fully imported image sets report no missing sequence", () => {
+  const sourceImages = ["one", "two", "three", "four"];
+  const assets = [{ sequence: 1 }, { sequence: 2 }, { sequence: 3 }, { sequence: 4 }];
+  assert.equal(firstMissingImageSequence(sourceImages, assets), 0);
+  assert.equal(countImportedImages(sourceImages, assets), 4);
+});
+
+test("embedded one-to-one and one-to-many records normalize consistently", () => {
+  const record = { id: "concept" };
+  assert.equal(oneRelatedRecord(record), record);
+  assert.equal(oneRelatedRecord([record]), record);
+  assert.equal(oneRelatedRecord([]), undefined);
+});
+
+test("scheduled synchronization requires one unambiguous owner", () => {
+  assert.equal(uniqueSheetOwner([{ user_id: "owner" }, { user_id: "owner" }]), "owner");
+  assert.throws(() => uniqueSheetOwner([]), /could not find a sheet owner/);
+  assert.throws(() => uniqueSheetOwner([{ user_id: "a" }, { user_id: "b" }]), /one unambiguous sheet owner/);
+});
+
+test("regenerated app content is detected before an older sheet version can overwrite it", () => {
+  const concept = {
+    summary: "New summary",
+    panel_count: 5,
+    post_type: "carousel",
+    image_summary: { content: "New regenerated content" },
+    caption: "New caption",
+    hashtags: ["#gsd-book", "#focus"],
+  };
+  const oldSheet = {
+    summary: "Old summary",
+    panel_count: 5,
+    post_type: "carousel",
+    content: "Old content",
+    caption: "Old caption",
+    hashtags: ["#gsd-book", "#focus"],
+  };
+  assert.equal(appConceptDiffersFromSheet(concept, oldSheet), true);
+  assert.equal(appConceptDiffersFromSheet(concept, {
+    ...oldSheet,
+    summary: concept.summary,
+    content: concept.image_summary.content,
+    caption: concept.caption,
+  }), false);
+});
+
+
+test("sheet polling preserves every app-owned Generation Suggestions field", () => {
+  const source = readFileSync(new URL("./sync-sheet-generation.js", import.meta.url), "utf8");
+  assert.match(source, /Generation Suggestions fields are app-owned/);
+  assert.doesNotMatch(source, /body: JSON\.stringify\(shared\.article\)/);
+  assert.match(source, /Sheet1!C\$\{rowNumber\}:I\$\{rowNumber\}/);
+  assert.match(source, /Sheet1!K\$\{rowNumber\}:L\$\{rowNumber\}/);
+  assert.match(source, /Generated image links were synchronized without changing app content/);
+});

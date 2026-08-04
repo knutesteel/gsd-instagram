@@ -1,6 +1,6 @@
 import { createPrivateKey, sign } from "node:crypto";
 import { extendSheetFilter } from "./sheet-filter.js";
-import { sharedFieldsFromSheetRow } from "./sheet-sync-fields.js";
+import { sharedFieldsFromSheetRow, sharedSheetValuesFromApp } from "./sheet-sync-fields.js";
 
 // The production workflow has one approved sheet. A stale deployment
 // environment variable must never redirect synchronization to an old copy.
@@ -49,7 +49,7 @@ const normalizeSheetStatus = (value) => {
 };
 const appStatusLabel = (value) => ({ sent_to_sheets: "Sent to Sheets", generated: "Generated", approved_to_post: "Approved", posted: "Posted", new: "New", discarded: "Archived" }[value] || String(value || "Unknown"));
 export const currentSheetRowNumber = (rows, row) => rows.indexOf(row) + 1;
-export const isNumericIdentifier = (value) => /^\d+$/.test(String(value ?? "").trim());
+export const isNumericIdentifier = (value) => /^\d+(?:-\d+)?$/.test(String(value ?? "").trim());
 export const uniqueNumericSheetRows = (rows) => {
   const byIdentifier = new Map();
   const duplicates = new Set();
@@ -114,6 +114,13 @@ export const sheetImageSummary = (currentSummary, images, importedImageCount = 0
   sheet_images: images,
   imported_image_count: importedImageCount,
 });
+export const appConceptDiffersFromSheet = (concept, sharedConcept) =>
+  String(concept.summary || "") !== sharedConcept.summary
+  || Number(concept.panel_count || 1) !== sharedConcept.panel_count
+  || String(concept.post_type || "") !== sharedConcept.post_type
+  || String(concept.image_summary?.content || "") !== sharedConcept.content
+  || String(concept.caption || "") !== sharedConcept.caption
+  || JSON.stringify(concept.hashtags || []) !== JSON.stringify(sharedConcept.hashtags);
 async function createSyncRun({ supabaseUrl, headers, userId, trigger }) {
   const response = await fetch(`${supabaseUrl}/rest/v1/sheet_sync_runs`, {
     method: "POST",
@@ -142,26 +149,46 @@ async function finishSyncRun({ supabaseUrl, headers, runId, status, rowsProcesse
 async function saveItemState({ supabaseUrl, headers, userId, articleId, identifier, stage, status, errorMessage = null, expectedImages = 0, importedImages = 0 }) {
   const failed = status === "failed";
   const now = new Date().toISOString();
-  const response = await fetch(`${supabaseUrl}/rest/v1/sheet_sync_items?on_conflict=user_id,article_id`, {
-    method: "POST",
-    headers: { ...headers, Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify([{
-      user_id: userId,
-      article_id: articleId,
-      identifier: Number(identifier),
-      stage,
-      status,
-      error_message: errorMessage,
-      expected_images: expectedImages,
-      imported_images: importedImages,
-      last_attempt_at: now,
-      last_success_at: status === "complete" ? now : null,
-      next_retry_at: failed ? new Date(Date.now() + 10 * 60 * 1000).toISOString() : null,
-      retry_count: failed ? 1 : 0,
-      updated_at: now,
-    }]),
-  });
-  if (!response.ok) throw new Error(`Couldn’t save synchronization state for #${identifier}.`);
+  const url = `${supabaseUrl}/rest/v1/sheet_sync_items?on_conflict=user_id,article_id`;
+  const body = JSON.stringify([{
+    user_id: userId,
+    article_id: articleId,
+    identifier: String(identifier),
+    stage,
+    status,
+    error_message: errorMessage,
+    expected_images: expectedImages,
+    imported_images: importedImages,
+    last_attempt_at: now,
+    last_success_at: status === "complete" ? now : null,
+    next_retry_at: failed ? new Date(Date.now() + 10 * 60 * 1000).toISOString() : null,
+    retry_count: failed ? 1 : 0,
+    updated_at: now,
+  }]);
+  let response;
+  let detail = "";
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { ...headers, Prefer: "resolution=merge-duplicates,return=representation" },
+        body,
+      });
+      if (response.ok) {
+        const saved = await response.json().catch(() => []);
+        const row = Array.isArray(saved) ? saved[0] : null;
+        if (row && String(row.article_id) === String(articleId) && String(row.identifier) === String(identifier)) return;
+        detail = "Supabase accepted the write but did not return the expected audit row.";
+      } else {
+        detail = (await response.text().catch(() => "")).slice(0, 300);
+      }
+    } catch (error) {
+      detail = error instanceof Error ? error.message : "request failed";
+    }
+    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 200 * (2 ** (attempt - 1))));
+  }
+  const statusCode = response ? ` HTTP ${response.status}.` : "";
+  throw new Error(`Couldn’t save synchronization state for #${identifier}.${statusCode}${detail ? ` Supabase: ${detail}` : ""}`);
 }
 async function googleToken() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
@@ -309,7 +336,7 @@ export default async function handler(req, res) {
     // identifier from moving to Generated/Approved/Posted.
     let restoredIdentifiers = [];
     let restorationWarning = null;
-    // Numeric app identifiers are the sole synchronization key. Legacy letter
+    // Numeric and numeric-variant app identifiers are the sole synchronization keys. Legacy letter
     // values are repaired below; they are never queried as current identities.
     const canonicalRows = uniqueNumericSheetRows(rows);
     const syncedRows = canonicalRows.rows;
@@ -353,7 +380,7 @@ export default async function handler(req, res) {
       }));
     for (const { row, rowNumber, identifier, status } of populatedRows) {
       if (!isNumericIdentifier(identifier)) {
-        const reason = `Spreadsheet row ${rowNumber} has no valid numeric identifier.`;
+        const reason = `Spreadsheet row ${rowNumber} has no valid numeric or numeric-variant identifier.`;
         syncErrors.push({ identifier: identifier || `row ${rowNumber}`, error: reason });
         setRowResult(rowNumber, identifier, "failed", reason);
       } else if (!normalizeSheetStatus(status)) {
@@ -406,46 +433,39 @@ export default async function handler(req, res) {
         rowChanged = true;
       }
 
-      // Reconcile every field shared by the spreadsheet and app before image
-      // downloads. The sheet is authoritative during a scheduled/manual pull;
-      // app saves use update-sheet-detail and write both stores immediately.
+      // Generation Suggestions fields are app-owned. Sheet polling may update
+      // workflow status and generated image links, but it must never rewrite
+      // title, URL, source, summary, type, panel count, content, caption, or
+      // hashtags. When either store differs, publish the current app values.
       const shared = sharedFieldsFromSheetRow(row);
-      const articleFieldsChanged = String(article.title || "") !== shared.article.title
+      const articleFieldsDiffer = String(article.title || "") !== shared.article.title
         || String(article.source_url || article.canonical_url || "") !== shared.article.source_url
         || String(article.source || "") !== shared.article.source;
-      if (articleFieldsChanged) {
-        const metadataUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
-          method: "PATCH",
-          headers: { ...headers, Prefer: "return=minimal" },
-          body: JSON.stringify(shared.article),
-        });
-        if (!metadataUpdate.ok) throw new Error(`Couldn’t synchronize article fields for #${identifier}.`);
-        if (!updatedArticleIds.includes(article.id)) updatedArticleIds.push(article.id);
-        rowChanged = true;
-      }
-
-      const currentContent = String(concept.image_summary?.content || "");
-      const conceptFieldsChanged = String(concept.summary || "") !== shared.concept.summary
-        || Number(concept.panel_count || 1) !== shared.concept.panel_count
-        || String(concept.post_type || "") !== shared.concept.post_type
-        || currentContent !== shared.concept.content
-        || String(concept.caption || "") !== shared.concept.caption
-        || JSON.stringify(concept.hashtags || []) !== JSON.stringify(shared.concept.hashtags);
-      if (conceptFieldsChanged) {
-        const sharedConceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
-          method: "PATCH",
-          headers: { ...headers, Prefer: "return=minimal" },
+      if (articleFieldsDiffer || appConceptDiffersFromSheet(concept, shared.concept)) {
+        const appShared = sharedSheetValuesFromApp({ article, concept });
+        const sheetUpdate = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            summary: shared.concept.summary,
-            panel_count: shared.concept.panel_count,
-            post_type: shared.concept.post_type,
-            image_summary: { ...(concept.image_summary || {}), content: shared.concept.content },
-            caption: shared.concept.caption,
-            hashtags: shared.concept.hashtags,
+            valueInputOption: "RAW",
+            data: [
+              { range: `Sheet1!C${rowNumber}:I${rowNumber}`, majorDimension: "ROWS", values: [[appShared.firstRange[0], identifier, ...appShared.firstRange.slice(1)]] },
+              { range: `Sheet1!K${rowNumber}:L${rowNumber}`, majorDimension: "ROWS", values: [appShared.secondRange] },
+              { range: `Sheet1!R${rowNumber}`, majorDimension: "ROWS", values: [[appShared.source]] },
+            ],
           }),
         });
-        if (!sharedConceptUpdate.ok) throw new Error(`Couldn’t synchronize content fields for #${identifier}.`);
-        if (!updatedArticleIds.includes(article.id)) updatedArticleIds.push(article.id);
+        if (!sheetUpdate.ok) throw new Error(`Couldn’t publish app-owned fields to the Google Sheet for #${identifier}.`);
+        row[2] = appShared.firstRange[0];
+        row[3] = identifier;
+        row[4] = appShared.firstRange[1];
+        row[5] = appShared.firstRange[2];
+        row[6] = appShared.firstRange[3];
+        row[7] = appShared.firstRange[4];
+        row[8] = appShared.firstRange[5];
+        row[10] = appShared.secondRange[0];
+        row[11] = appShared.secondRange[1];
+        row[17] = appShared.source;
         rowChanged = true;
       }
 
@@ -455,15 +475,7 @@ export default async function handler(req, res) {
       enrichmentQueue.push({
         identifier,
         article,
-        concept: {
-          ...concept,
-          summary: shared.concept.summary,
-          panel_count: shared.concept.panel_count,
-          post_type: shared.concept.post_type,
-          image_summary: { ...(concept.image_summary || {}), content: shared.concept.content },
-          caption: shared.concept.caption,
-          hashtags: shared.concept.hashtags,
-        },
+        concept,
         row,
         sourceImages,
         images,
@@ -478,7 +490,7 @@ export default async function handler(req, res) {
         rowNumber,
         identifier,
         rowChanged ? "updated" : "already_synchronized",
-        rowChanged ? "App record reconciled with the spreadsheet." : "App record already matched the spreadsheet.",
+        rowChanged ? "App record and authoritative content were reconciled with the spreadsheet." : "App record already matched the spreadsheet.",
       );
       } catch (error) {
         const reason = error instanceof Error ? error.message : "This row could not be synchronized.";
@@ -487,25 +499,19 @@ export default async function handler(req, res) {
       }
     }
 
-    // Pass 2: synchronize captions and image references for every status,
-    // including Posted. Posted previously returned early, which permanently
-    // hid images when the initial import had not completed.
+    // Pass 2: synchronize generated image references for every status,
+    // including Posted, without rewriting app-owned editorial text.
     let imagesImportedThisRun = 0;
     for (const { identifier, article, concept, row, sourceImages, images } of enrichmentQueue) {
       try {
-        const caption = String(row[10] || "");
-        const hashtags = Array.from(new Set(String(row[11] || "").split(/[\s,]+/).filter(Boolean))).slice(0, 4);
         const currentImages = Array.isArray(concept.image_summary?.sheet_images) ? concept.image_summary.sheet_images : [];
         const importedImageCount = Number(concept.image_summary?.imported_image_count || 0);
         const imageLinksChanged = JSON.stringify(currentImages) !== JSON.stringify(images);
-        const linksAndTextSynced = !imageLinksChanged
-          && String(concept.caption || "") === caption
-          && JSON.stringify(concept.hashtags || []) === JSON.stringify(hashtags);
 
         // Persist the sheet links first. Generation Details can render these
         // through the same-origin image proxy even if Drive import is slow or
         // temporarily unavailable.
-        if (!linksAndTextSynced) {
+        if (imageLinksChanged) {
           const conceptUpdate = await fetch(`${supabaseUrl}/rest/v1/post_concepts?id=eq.${concept.id}`, {
             method: "PATCH",
             headers: { ...headers, Prefer: "return=representation" },
@@ -515,8 +521,6 @@ export default async function handler(req, res) {
                 images,
                 imageLinksChanged ? 0 : importedImageCount,
               ),
-              caption,
-              hashtags,
             }),
           });
           if (!conceptUpdate.ok) throw new Error(`Couldn’t save generated image links for #${identifier}.`);
@@ -529,7 +533,7 @@ export default async function handler(req, res) {
             currentSheetRowNumber(rows, row),
             identifier,
             "updated",
-            "Generated image links and text were synchronized.",
+            "Generated image links were synchronized without changing app content.",
           );
         }
 

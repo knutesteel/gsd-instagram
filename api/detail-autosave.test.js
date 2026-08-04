@@ -27,3 +27,15 @@ test("custom content before Panel 1 survives later field saves and reloads", () 
   assert.doesNotMatch(source, /value\.slice\(firstPanel\)/);
   assert.match(source, /function formatPanelContent\(value: string\) \{[\s\S]*?return value[\s\S]*?\.trim\(\);/);
 });
+
+test("every edit is debounced and saved as a sparse field patch", () => {
+  assert.match(source, /pendingChangesRef\.current = \{ \.\.\.pendingChangesRef\.current, \[key\]: value \}/);
+  assert.match(source, /window\.setTimeout\(\(\) => \{[\s\S]*?void save\(true\);[\s\S]*?\}, 750\)/);
+  assert.match(source, /await saveDetail\(articleId, patch\)/);
+  assert.doesNotMatch(source, /await saveDetail\(articleId, snapshot\)/);
+});
+
+test("pending field edits flush before navigation, generation, and unmount", () => {
+  assert.match(source, /if \(dirtyRef\.current\) await save\(true\)/);
+  assert.match(source, /if \(Object\.keys\(patch\)\.length\) void saveDetail\(story\.id, patch\)/);
+});

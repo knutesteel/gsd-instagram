@@ -58,7 +58,7 @@ ${contentInstructions}`;
   const records = [];
   for (const item of accepted) {
     const fingerprint = createHash("sha256").update(item.url.split("#")[0].replace(/\/$/, "")).digest("hex");
-    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, source: mode === "overview" ? String(source || "").trim() : item.publisher, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "new", generation_identifier: String(nextIdentifier) }) });
+    const articleResponse = await fetch(`${supabaseUrl}/rest/v1/articles?on_conflict=user_id,url_fingerprint`, { method: "POST", headers: { ...auth, ...jsonHeaders, Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ user_id: user.id, canonical_url: item.url, source_url: item.url, source: mode === "overview" ? String(source || "").trim() : item.publisher, url_fingerprint: fingerprint, title: item.title, publisher: item.publisher, category: item.category, rank: item.rank, status: "auto_added", generation_identifier: String(nextIdentifier) }) });
     if (!articleResponse.ok) return res.status(502).json({ error: `Couldn’t save a discovered article: ${await articleResponse.text()}` });
     const articleRows = articleResponse.ok ? await articleResponse.json() : [];
     let article = articleRows[0];

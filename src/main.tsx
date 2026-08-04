@@ -46,6 +46,7 @@ type Story = {
   id: string;
   title: string;
   createdAt: string | null;
+  postedAt: string | null;
   overview: string;
   category: string;
   source: string;
@@ -54,7 +55,7 @@ type Story = {
   score: number;
   url?: string;
   type: string;
-  status: "New" | "Sent to Sheets" | "Generated" | "Approved" | "Posted" | "Archived";
+  status: "New" | "Auto-Added" | "Sent to Sheets" | "Generated" | "Approved" | "Posted" | "Archived";
   generationIdentifier?: string | null;
   generationSheetRow?: number | null;
   featuredImage?: string | null;
@@ -101,6 +102,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     id: row.id,
     title: row.title,
     createdAt: row.created_at ?? null,
+    postedAt: row.posted_at ?? null,
     generationIdentifier: row.generation_identifier ?? null,
     generationSheetRow: row.generation_sheet_row ?? null,
     url: isTextOverview ? "" : row.source_url ?? row.canonical_url ?? "",
@@ -113,7 +115,7 @@ function storyFromRow(row: any, featuredImageOverride?: string | null): Story {
     type: postConcept?.post_type ?? "carousel",
     featuredImage: featuredImageOverride || embeddedImage || (sheetImage ? displayImageUrl(sheetImage) : null),
     featuredImageFallback: sheetImage ? directImageFallback(sheetImage) : null,
-    status: (row.status === "discarded" ? "Archived" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : row.status === "posted" ? "Posted" : "New") as Story["status"],
+    status: (row.status === "discarded" ? "Archived" : row.status === "auto_added" ? "Auto-Added" : row.status === "sent_to_sheets" ? "Sent to Sheets" : row.status === "generated" ? "Generated" : row.status === "approved_to_post" ? "Approved" : row.status === "posted" ? "Posted" : "New") as Story["status"],
   };
 }
 
@@ -152,7 +154,7 @@ function App() {
     if (!supabase) return [] as Story[];
     const { data, error } = await supabase
       .from("articles")
-      .select("id,title,created_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,post_handoff_at,is_favorite,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
+      .select("id,title,created_at,posted_at,generation_identifier,generation_sheet_row,source_url,canonical_url,source,post_handoff_at,is_favorite,category,rank,status,post_concepts(id,post_type,summary,image_summary)")
       .order("created_at", { ascending: false });
     if (error) throw new Error(`Couldn’t load your queue: ${error.message}`);
     const conceptIds = (data ?? []).map((row: any) => conceptFromArticle(row)?.id).filter(Boolean);
@@ -237,7 +239,7 @@ function App() {
     // One-time repair for any legacy app record. New and Archived records also
     // require durable identifiers even when they never reach Google Sheets.
     const needsIdentifierRepair = items.some((item) =>
-      !/^\d+$/.test(String(item.generationIdentifier ?? "").trim()),
+      !/^\d+(?:-\d+)?$/.test(String(item.generationIdentifier ?? "").trim()),
     );
     if (!supabase || !userId || !needsIdentifierRepair || normalizingIdentifiers.current) return;
     const client = supabase;
@@ -262,7 +264,7 @@ function App() {
       }
     });
   }, [userId, items]);
-  const updateStatus = async (id: string, status: "discarded" | "new" | "sent_to_sheets" | "generated" | "approved_to_post" | "posted") => {
+  const updateStatus = async (id: string, status: "discarded" | "new" | "auto_added" | "sent_to_sheets" | "generated" | "approved_to_post" | "posted") => {
     if (!supabase) return;
     const { error } = await supabase.from("articles").update({ status }).eq("id", id);
     if (error) throw new Error(`Couldn’t save change: ${error.message}`);
@@ -281,24 +283,33 @@ function App() {
     setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item));
     if (id === selected) await loadConcept(id);
   };
-  const saveDetail = async (articleId: string, values: DetailValues) => {
+  const saveDetail = async (articleId: string, values: Partial<DetailValues>) => {
     if (!supabase) return;
-    const hashtags = normalizeHashtags(values.hashtags);
+    const normalizedValues: Record<string, unknown> = { ...values };
+    if (Object.prototype.hasOwnProperty.call(values, "hashtags")) {
+      normalizedValues.hashtags = normalizeHashtags(String(values.hashtags ?? ""));
+    }
     const { data } = await supabase.auth.getSession();
     if (!data.session) throw new Error("Please sign in again.");
     const response = await fetch("/api/update-sheet-detail", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-      body: JSON.stringify({ articleId, values: { ...values, hashtags } }),
+      body: JSON.stringify({ articleId, values: normalizedValues }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Couldn’t synchronize article changes.");
-    setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, source: values.source, score: values.score, type: values.postType } : item));
+    setItems((old) => old.map((item) => item.id === articleId ? {
+      ...item,
+      ...(values.title !== undefined ? { title: values.title } : {}),
+      ...(values.url !== undefined ? { url: values.url } : {}),
+      ...(values.source !== undefined ? { source: values.source } : {}),
+      ...(values.score !== undefined ? { score: values.score } : {}),
+      ...(values.postType !== undefined ? { type: values.postType } : {}),
+    } : item));
     await loadConcept(articleId);
   };
   const sendForGeneration = async (articleId: string, values: DetailValues) => {
     if (!supabase) throw new Error("Supabase is not configured.");
-    await saveDetail(articleId, values);
     const { data } = await supabase.auth.getSession();
     if (!data.session) throw new Error("Please sign in again.");
     const response = await fetch("/api/send-for-generation", {
@@ -366,6 +377,18 @@ function App() {
     if (error) throw new Error(`Couldn’t update favorite: ${error.message}`);
     setItems((old) => old.map((item) => item.id === articleId ? { ...item, isFavorite } : item));
   };
+  const duplicateIdea = async (articleId: string) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { data, error } = await supabase.rpc("duplicate_article_idea", { source_article_id: articleId });
+    if (error) throw new Error(`Couldn’t duplicate this idea: ${error.message}`);
+    const duplicate = Array.isArray(data) ? data[0] : data;
+    if (!duplicate?.article_id) throw new Error("The duplicate was created without a record identifier.");
+    await loadStories();
+    setSelected(duplicate.article_id);
+    await loadConcept(duplicate.article_id);
+    setScreen("detail");
+    return duplicate as { article_id: string; generation_identifier: string };
+  };
   const approveGeneratedContent = async (articleId: string) => {
     if (!supabase) return;
     const { data } = await supabase.auth.getSession(); if (!data.session) throw new Error("Please sign in again.");
@@ -423,7 +446,6 @@ function App() {
               { key: "discover", icon: <FiCompass />, label: "Discover" },
               { key: "articles", icon: <FiFileText />, label: "Generation Details" },
               { key: "insights", icon: <FiBarChart2 />, label: "Instagram Insights" },
-              { key: "archive", icon: <FiArchive />, label: "Archive" },
             ] as const
           ).map((n) => (
             <button
@@ -435,6 +457,31 @@ function App() {
               <span>{n.label}</span>
             </button>
           ))}
+          <a
+            className="nav-item"
+            href="https://hank-squirrel-collaborations.knutesteel.chatgpt.site/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <FiUsers />
+            <span>Collaboration Plan</span>
+          </a>
+          <a
+            className="nav-item"
+            href="https://gsd-retail-plan.knutesteel.chatgpt.site/"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <FiExternalLink />
+            <span>Retail Plan</span>
+          </a>
+          <button
+            className={screen === "archive" ? "nav-item nav-archive active" : "nav-item nav-archive"}
+            onClick={() => setScreen("archive")}
+          >
+            <FiArchive />
+            <span>Archive</span>
+          </button>
         </nav>
         <div className="sidebar-footer">
           <div className="voice-dot">G</div>
@@ -505,6 +552,7 @@ function App() {
             approveGeneratedContent={approveGeneratedContent}
             markPostHandoff={markPostHandoff}
             toggleFavorite={(isFavorite) => toggleFavorite(active.id, isFavorite)}
+            duplicateIdea={() => duplicateIdea(active.id)}
           />
         )}
         {screen === "insights" && <InstagramInsights notify={notify} />}
@@ -1442,26 +1490,24 @@ function Dashboard({
   const [category, setCategory] = useState("all");
   const [type, setType] = useState("all");
   const [minimumScore, setMinimumScore] = useState("0");
-  const [dateSort, setDateSort] = useState<"newest" | "oldest">("newest");
+  const [sortField, setSortField] = useState<"identifier" | "date" | "status" | "score">("date");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [favoriteFilter, setFavoriteFilter] = useState<"all" | "favorites" | "not-favorites">("all");
   const shown = items
     .filter((i) => i.title.toLowerCase().includes(filter.toLowerCase()) && (category === "all" || i.category === category) && (type === "all" || i.type === type) && i.score >= Number(minimumScore) && (statusFilter === "all" || i.status === statusFilter) && (favoriteFilter === "all" || (favoriteFilter === "favorites" ? i.isFavorite : !i.isFavorite)))
     .sort((a, b) => {
-      const aDate = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const bDate = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return dateSort === "newest" ? bDate - aDate : aDate - bDate;
+      const statusOrder: Array<Story["status"]> = ["Auto-Added", "New", "Sent to Sheets", "Generated", "Approved", "Posted", "Archived"];
+      const comparison = sortField === "identifier"
+        ? String(a.generationIdentifier ?? "").localeCompare(String(b.generationIdentifier ?? ""), undefined, { numeric: true })
+        : sortField === "date"
+          ? (a.createdAt ? new Date(a.createdAt).getTime() : 0) - (b.createdAt ? new Date(b.createdAt).getTime() : 0)
+          : sortField === "status"
+            ? statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status)
+            : a.score - b.score;
+      return sortDirection === "asc" ? comparison : -comparison;
     });
   const categories = [...new Set(items.map((item) => item.category))];
   const types = [...new Set(items.map((item) => item.type))];
-  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Posted", "Archived"];
-  const groupedStories = Array.from(
-    shown.reduce((groups, item) => {
-      const stories = groups.get(item.status) ?? [];
-      stories.push(item);
-      groups.set(item.status, stories);
-      return groups;
-    }, new Map<Story["status"], Story[]>()),
-  ).sort(([firstStatus], [secondStatus]) => statusOrder.indexOf(firstStatus) - statusOrder.indexOf(secondStatus));
   return (
     <section>
       <header className="page-header">
@@ -1498,9 +1544,10 @@ function Dashboard({
         <select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">All categories</option>{categories.map((value) => <option key={value} value={value}>{value}</option>)}</select>
         <select value={minimumScore} onChange={(e) => setMinimumScore(e.target.value)}><option value="0">Any score</option><option value="90">90+</option><option value="75">75+</option><option value="60">60+</option></select>
         <select value={type} onChange={(e) => setType(e.target.value)}><option value="all">All post types</option>{types.map((value) => <option key={value} value={value}>{value}</option>)}</select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | Story["status"])} aria-label="Filter by status"><option value="all">All statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option></select>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as "all" | Story["status"])} aria-label="Filter by status"><option value="all">All statuses</option><option>Auto-Added</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option></select>
         <select value={favoriteFilter} onChange={(e) => setFavoriteFilter(e.target.value as "all" | "favorites" | "not-favorites")} aria-label="Filter by favorite"><option value="all">All items</option><option value="favorites">Favorites</option><option value="not-favorites">Not favorites</option></select>
-        <select value={dateSort} onChange={(e) => setDateSort(e.target.value as "newest" | "oldest")} aria-label="Sort by date added"><option value="newest">Date added: Newest first</option><option value="oldest">Date added: Oldest first</option></select>
+        <select value={sortField} onChange={(e) => setSortField(e.target.value as typeof sortField)} aria-label="Sort dashboard"><option value="identifier">Sort by identifier</option><option value="date">Sort by date added</option><option value="status">Sort by status</option><option value="score">Sort by score</option></select>
+        <select value={sortDirection} onChange={(e) => setSortDirection(e.target.value as "asc" | "desc")} aria-label="Sort direction"><option value="desc">Descending</option><option value="asc">Ascending</option></select>
       </div>
       <div className="story-table">
         <div className="story-head">
@@ -1514,9 +1561,7 @@ function Dashboard({
           <span>Actions</span>
         </div>
         {shown.length === 0 && <div className="empty-queue"><FiCompass /><h2>No stories in your queue yet</h2><p>Use Discover to find fresh, high-fit stories. Your discarded items remain protected from duplicates.</p><button className="button primary" onClick={discover}>Find fresh stories</button></div>}
-        {groupedStories.map(([categoryName, stories]) => <React.Fragment key={categoryName}>
-          <div className="category-group-heading"><b>{categoryName}</b><span>{stories.length} {stories.length === 1 ? "story" : "stories"}</span></div>
-          {stories.map((item) => (
+        {shown.map((item) => (
             <div className="story-row" key={item.id}>
               <div>
                 <h3><button type="button" className={`favorite-star ${item.isFavorite ? "active" : ""}`} aria-label={item.isFavorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={item.isFavorite} onClick={() => toggleFavorite(item.id, !item.isFavorite)}><FiStar /></button><button className="story-title-link" onClick={() => select(item.id)}>{item.title}</button></h3>
@@ -1527,13 +1572,12 @@ function Dashboard({
               <div><span className="chip">{item.category}</span>{item.source && <small className="story-source">{item.source}</small>}{item.postHandoffAt && item.status !== "Posted" && <span className="posted-question-pill">Posted?</span>}</div>
               <span className="score">{item.score}</span>
               <span className="type">{item.type}</span>
-              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select>
+              <select className="status-select" value={item.status} onChange={(e) => onStatus(item.id, e.target.value as Story["status"])}><option>Auto-Added</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select>
               <div className="actions">
                 {item.status === "Generated" && <button className="button compact primary" onClick={() => approve(item.id)}><FiCheck /> Approve</button>}
               </div>
             </div>
           ))}
-        </React.Fragment>)}
       </div>
     </section>
   );
@@ -1550,21 +1594,27 @@ function ArticleList({
   setStatusFilter: (value: "all" | Story["status"]) => void;
   select: (id: string) => void;
 }) {
-  const statusOrder: Array<Story["status"]> = ["New", "Sent to Sheets", "Generated", "Approved", "Posted"];
+  const statusOrder: Array<Story["status"]> = ["Auto-Added", "New", "Sent to Sheets", "Generated", "Approved", "Posted"];
   const shown = items.filter((item) => item.status !== "Archived" && (statusFilter === "all" || item.status === statusFilter));
   const groups = Array.from(shown.reduce((all, item) => {
     const group = all.get(item.status) ?? [];
     group.push(item);
     all.set(item.status, group);
     return all;
-  }, new Map<Story["status"], Story[]>()),).sort(([a], [b]) => statusOrder.indexOf(a) - statusOrder.indexOf(b));
+  }, new Map<Story["status"], Story[]>()),)
+    .map(([status, stories]) => [status, status === "Posted" ? [...stories].sort((a, b) => {
+      const aTime = a.postedAt ? new Date(a.postedAt).getTime() : 0;
+      const bTime = b.postedAt ? new Date(b.postedAt).getTime() : 0;
+      return bTime - aTime;
+    }) : stories] as [Story["status"], Story[]])
+    .sort(([a], [b]) => statusOrder.indexOf(a) - statusOrder.indexOf(b));
   return <section>
     <header className="page-header">
       <div><h1>Generation Details</h1><p>Browse active items by status, then open any title to review its generation suggestions.</p></div>
     </header>
     <div className="filter-row article-list-filter">
       <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | Story["status"])} aria-label="Filter articles by status">
-        <option value="all">All active statuses</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option>
+        <option value="all">All active statuses</option><option>Auto-Added</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option>
       </select>
     </div>
     <div className="article-list">
@@ -1710,7 +1760,10 @@ function Discover({
   const promptEdited = searchText.trim() !== savedSearchPrompt.trim();
   const addTopic = () => { const value = topicInput.trim(); if (value && !topics.includes(value)) setTopics([...topics, value]); setTopicInput(""); };
   const run = async (savePrompt = false) => {
-    if (mode === "manual" && !/^https?:\/\//i.test(manualUrl.trim())) return notify("Paste a complete article URL, starting with https://.");
+    const manualUrls = Array.from(new Set(manualUrl.split(/[\s,]+/).map((url) => url.trim()).filter(Boolean)));
+    if (mode === "manual" && manualUrls.length === 0) return notify("Paste at least one complete article URL, starting with https://.");
+    const invalidManualUrls = manualUrls.filter((url) => !/^https:\/\//i.test(url));
+    if (mode === "manual" && invalidManualUrls.length === manualUrls.length) return notify("Paste at least one complete HTTPS article URL.");
     if (mode === "overview" && !overview.trim()) return notify("Add a text overview to generate a suggested post.");
     if (mode === "system" && !searchText.trim() && topics.length === 0) return notify("Add a search prompt or at least one topic.");
     if (mode === "system" && savePrompt) {
@@ -1720,10 +1773,25 @@ function Discover({
     }
     setSearching(true);
     try {
+      if (mode === "manual") {
+        const validManualUrls = manualUrls.filter((url) => /^https:\/\//i.test(url));
+        const results = await Promise.allSettled(validManualUrls.map((url) => research({ mode, manualUrl: url })));
+        const successful = results
+          .filter((result): result is PromiseFulfilledResult<{ count: number; articleIds?: string[] }> => result.status === "fulfilled")
+          .map((result) => result.value);
+        const failedCount = results.length - successful.length + invalidManualUrls.length;
+        const addedCount = successful.reduce((sum, result) => sum + result.count, 0);
+        const firstArticleId = successful.flatMap((result) => result.articleIds ?? [])[0];
+        setQueued([`${validManualUrls.length} URLs processed`, `${addedCount} ${addedCount === 1 ? "story" : "stories"} added`, failedCount ? `${failedCount} failed or invalid` : "All URLs completed"]);
+        if (firstArticleId) onManualComplete(firstArticleId);
+        if (failedCount) notify(`${addedCount} ${addedCount === 1 ? "story" : "stories"} added; ${failedCount} URL${failedCount === 1 ? "" : "s"} could not be processed.`);
+        else notify(`${addedCount} ${addedCount === 1 ? "story" : "stories"} added to your dashboard.`);
+        return;
+      }
       const result = await research({ mode, manualUrl: manualUrl.trim(), overview: overview.trim(), source: source.trim(), searchText: searchText.trim(), topics });
-      setQueued(mode === "manual" || mode === "overview" ? [mode === "overview" ? "Overview interpreted" : "Article analyzed", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
+      setQueued(mode === "overview" ? ["Overview interpreted", "GSD fit scored", "Post concept saved"] : ["Searching trusted, accessible sources", "Ranking GSD audience fit", "Building post concepts"]);
       notify(`${result.count} ${result.count === 1 ? "story" : "stories"} added to your dashboard.`);
-      if ((mode === "manual" || mode === "overview") && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
+      if (mode === "overview" && result.articleIds?.[0]) onManualComplete(result.articleIds[0]);
     } catch (error) { notify(error instanceof Error ? error.message : "Research failed."); }
     finally { setSearching(false); }
   };
@@ -1745,7 +1813,7 @@ function Discover({
             <button className={mode === "overview" ? "selected" : ""} onClick={() => setMode("overview")}>Text overview</button>
             <button className={mode === "system" ? "selected" : ""} onClick={() => setMode("system")}>System Search</button>
           </div>
-          {mode === "manual" ? <Field label="Direct article URL"><input value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder="https://example.com/article" /></Field> : mode === "overview" ? <><Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field><Field label="Source"><input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Where this idea came from" /></Field></> : <><Field label="What should we search for?"><textarea className="overview-editor" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Describe the stories the system should find." /></Field>
+          {mode === "manual" ? <Field label="Article URLs"><textarea className="overview-editor" value={manualUrl} onChange={(e) => setManualUrl(e.target.value)} placeholder={"https://example.com/article-one\nhttps://example.com/article-two"} /></Field> : mode === "overview" ? <><Field label="Text overview"><textarea className="overview-editor" value={overview} onChange={(e) => setOverview(e.target.value)} placeholder="Describe the observation, idea, situation, or theme. No news article is required." /></Field><Field label="Source"><input value={source} onChange={(e) => setSource(e.target.value)} placeholder="Where this idea came from" /></Field></> : <><Field label="What should we search for?"><textarea className="overview-editor" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Describe the stories the system should find." /></Field>
           <p className="field-label">Topics</p>
           <div className="chips">
             {topics.map((topic) => <span key={topic}>{topic} <button aria-label={`Remove ${topic}`} onClick={() => setTopics(topics.filter((item) => item !== topic))}><FiX /></button></span>)}
@@ -1837,6 +1905,7 @@ function Detail({
   approveGeneratedContent,
   markPostHandoff,
   toggleFavorite,
+  duplicateIdea,
   notify,
 }: {
   story: Story;
@@ -1844,13 +1913,14 @@ function Detail({
   previous: () => void;
   next: () => void;
   onStatus: (status: Story["status"]) => void;
-  saveDetail: (id: string, values: DetailValues) => Promise<void>;
+  saveDetail: (id: string, values: Partial<DetailValues>) => Promise<void>;
   reanalyze: () => Promise<unknown>;
   sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
   syncGeneratedContent: () => Promise<void>;
   approveGeneratedContent: (articleId: string) => Promise<void>;
   markPostHandoff: (articleId: string) => Promise<void>;
   toggleFavorite: (isFavorite: boolean) => Promise<void>;
+  duplicateIdea: () => Promise<{ article_id: string; generation_identifier: string }>;
   notify: Notify;
 }) {
   const [values, setValues] = useState<DetailValues>(() => detailValues(story, concept));
@@ -1864,6 +1934,8 @@ function Detail({
   const [dirty, setDirty] = useState(false);
   const valuesRef = useRef(values);
   const dirtyRef = useRef(false);
+  const pendingChangesRef = useRef<Partial<DetailValues>>({});
+  const autosaveTimerRef = useRef<number | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Prefer app-storage copies. If any cannot be signed, retain the Drive image
   // URLs as a fallback instead of rendering an empty gallery.
@@ -1884,6 +1956,9 @@ function Detail({
     setValues(nextValues);
     valuesRef.current = nextValues;
     dirtyRef.current = false;
+    pendingChangesRef.current = {};
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = null;
     setDirty(false);
   }, [story.id]);
   useEffect(() => {
@@ -1927,6 +2002,7 @@ function Detail({
     return () => { cancelled = true; };
   }, [story.id, story.status, promptReload]);
   const update = (key: keyof DetailValues, value: string | number) => {
+    pendingChangesRef.current = { ...pendingChangesRef.current, [key]: value };
     dirtyRef.current = true;
     setDirty(true);
     setValues((old) => {
@@ -1934,19 +2010,31 @@ function Detail({
       valuesRef.current = nextValues;
       return nextValues;
     });
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void save(true);
+    }, 750);
   };
   const save = async (quiet = false) => {
-    if (!dirtyRef.current) return;
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = null;
+    const patch = pendingChangesRef.current;
+    if (!Object.keys(patch).length) return saveQueueRef.current;
     const articleId = story.id;
-    const snapshot = valuesRef.current;
+    pendingChangesRef.current = {};
     dirtyRef.current = false;
     setBusy("save");
     const operation = saveQueueRef.current.catch(() => undefined).then(async () => {
       try {
-        await saveDetail(articleId, snapshot);
-        if (valuesRef.current === snapshot) setDirty(false);
+        await saveDetail(articleId, patch);
+        if (!Object.keys(pendingChangesRef.current).length) {
+          dirtyRef.current = false;
+          setDirty(false);
+        }
         if (!quiet) notify(story.generationIdentifier ? "Changes verified in the app and Google Sheet." : "Changes saved in the app.");
       } catch (error) {
+        pendingChangesRef.current = { ...patch, ...pendingChangesRef.current };
         dirtyRef.current = true;
         setDirty(true);
         notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error");
@@ -1968,10 +2056,18 @@ function Detail({
       // Stay on this record when the save could not be verified.
     }
   };
+  useEffect(() => () => {
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    const patch = pendingChangesRef.current;
+    pendingChangesRef.current = {};
+    if (Object.keys(patch).length) void saveDetail(story.id, patch);
+  }, [story.id]);
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
   const send = async () => {
     setBusy("sheet");
     try {
+      if (dirtyRef.current) await save(true);
+      else await saveQueueRef.current;
       const result = await sendForGeneration(story.id, values) as { warnings?: string[] };
       setPromptRepairRequired(false);
       setPromptReload((value) => value + 1);
@@ -2083,7 +2179,8 @@ function Detail({
           </button>
           </div>
           <button type="button" className={`favorite-star detail-favorite ${story.isFavorite ? "active" : ""}`} aria-label={story.isFavorite ? "Remove from favorites" : "Add to favorites"} aria-pressed={story.isFavorite} onClick={() => void toggleFavorite(!story.isFavorite).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t update favorite.", "error"))}><FiStar /> {story.isFavorite ? "Favorite" : "Add favorite"}</button>
-          <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select></label>
+          <button type="button" onClick={() => { setBusy("duplicate"); void duplicateIdea().then((created) => notify(`Duplicate #${created.generation_identifier} created.`)).catch((error) => notify(error instanceof Error ? error.message : "Couldn’t duplicate this idea.", "error")).finally(() => setBusy("")); }} disabled={Boolean(busy)}><FiCopy /> {busy === "duplicate" ? "Duplicating…" : "Duplicate idea"}</button>
+          <label className="detail-status-control">Status<select value={story.status} onChange={(e) => onStatus(e.target.value as Story["status"])}><option>Auto-Added</option><option>New</option><option>Sent to Sheets</option><option>Generated</option><option>Approved</option><option>Posted</option><option>Archived</option></select></label>
           <button onClick={() => void refresh()} disabled={Boolean(busy)}><FiRefreshCw className={busy === "refresh" ? "spin" : ""} /> {busy === "refresh" ? "Refreshing…" : "Refresh data"}</button>
           {story.status === "Generated" && <button className="button primary" onClick={() => void approve()} disabled={Boolean(busy)}><FiCheck /> {busy === "approve" ? "Approving…" : "Approve"}</button>}
           <button onClick={rerun} disabled={Boolean(busy) || lockedAfterSheetSend}><FiRefreshCw /> {busy === "analysis" ? "Analyzing…" : isTextOverview ? "Regenerate suggestion" : "Regenerate analysis"}</button>
@@ -2143,10 +2240,6 @@ function normalizeHashtags(value: string) {
   return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 4);
 }
 function formatPanelContent(value: string) {
-  // Preserve author instructions before Panel 1. The previous formatter sliced
-  // everything before the first panel, so valid additions (for example,
-  // recurring character directions) appeared to save and then vanished when
-  // another field change reloaded the concept.
   return value
     .replace(/\bHank\s*\(human\)/gi, "Hank")
     .replace(/(?:^|\n)\s*(?:Style|Voice)\s*:[\s\S]*?(?=\n\s*Panel\s+\d+\b|$)/gi, "")
