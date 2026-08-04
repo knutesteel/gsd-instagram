@@ -283,24 +283,33 @@ function App() {
     setItems((old) => old.map((item) => item.id === id ? { ...item, status } : item));
     if (id === selected) await loadConcept(id);
   };
-  const saveDetail = async (articleId: string, values: DetailValues) => {
+  const saveDetail = async (articleId: string, values: Partial<DetailValues>) => {
     if (!supabase) return;
-    const hashtags = normalizeHashtags(values.hashtags);
+    const normalizedValues: Record<string, unknown> = { ...values };
+    if (Object.prototype.hasOwnProperty.call(values, "hashtags")) {
+      normalizedValues.hashtags = normalizeHashtags(String(values.hashtags ?? ""));
+    }
     const { data } = await supabase.auth.getSession();
     if (!data.session) throw new Error("Please sign in again.");
     const response = await fetch("/api/update-sheet-detail", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session.access_token}` },
-      body: JSON.stringify({ articleId, values: { ...values, hashtags } }),
+      body: JSON.stringify({ articleId, values: normalizedValues }),
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error ?? "Couldn’t synchronize article changes.");
-    setItems((old) => old.map((item) => item.id === articleId ? { ...item, title: values.title, url: values.url, source: values.source, score: values.score, type: values.postType } : item));
+    setItems((old) => old.map((item) => item.id === articleId ? {
+      ...item,
+      ...(values.title !== undefined ? { title: values.title } : {}),
+      ...(values.url !== undefined ? { url: values.url } : {}),
+      ...(values.source !== undefined ? { source: values.source } : {}),
+      ...(values.score !== undefined ? { score: values.score } : {}),
+      ...(values.postType !== undefined ? { type: values.postType } : {}),
+    } : item));
     await loadConcept(articleId);
   };
   const sendForGeneration = async (articleId: string, values: DetailValues) => {
     if (!supabase) throw new Error("Supabase is not configured.");
-    await saveDetail(articleId, values);
     const { data } = await supabase.auth.getSession();
     if (!data.session) throw new Error("Please sign in again.");
     const response = await fetch("/api/send-for-generation", {
@@ -1904,7 +1913,7 @@ function Detail({
   previous: () => void;
   next: () => void;
   onStatus: (status: Story["status"]) => void;
-  saveDetail: (id: string, values: DetailValues) => Promise<void>;
+  saveDetail: (id: string, values: Partial<DetailValues>) => Promise<void>;
   reanalyze: () => Promise<unknown>;
   sendForGeneration: (articleId: string, values: DetailValues) => Promise<{ updatedRange?: string }>;
   syncGeneratedContent: () => Promise<void>;
@@ -1925,6 +1934,8 @@ function Detail({
   const [dirty, setDirty] = useState(false);
   const valuesRef = useRef(values);
   const dirtyRef = useRef(false);
+  const pendingChangesRef = useRef<Partial<DetailValues>>({});
+  const autosaveTimerRef = useRef<number | null>(null);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   // Prefer app-storage copies. If any cannot be signed, retain the Drive image
   // URLs as a fallback instead of rendering an empty gallery.
@@ -1945,6 +1956,9 @@ function Detail({
     setValues(nextValues);
     valuesRef.current = nextValues;
     dirtyRef.current = false;
+    pendingChangesRef.current = {};
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = null;
     setDirty(false);
   }, [story.id]);
   useEffect(() => {
@@ -1988,6 +2002,7 @@ function Detail({
     return () => { cancelled = true; };
   }, [story.id, story.status, promptReload]);
   const update = (key: keyof DetailValues, value: string | number) => {
+    pendingChangesRef.current = { ...pendingChangesRef.current, [key]: value };
     dirtyRef.current = true;
     setDirty(true);
     setValues((old) => {
@@ -1995,19 +2010,31 @@ function Detail({
       valuesRef.current = nextValues;
       return nextValues;
     });
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void save(true);
+    }, 750);
   };
   const save = async (quiet = false) => {
-    if (!dirtyRef.current) return;
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = null;
+    const patch = pendingChangesRef.current;
+    if (!Object.keys(patch).length) return saveQueueRef.current;
     const articleId = story.id;
-    const snapshot = valuesRef.current;
+    pendingChangesRef.current = {};
     dirtyRef.current = false;
     setBusy("save");
     const operation = saveQueueRef.current.catch(() => undefined).then(async () => {
       try {
-        await saveDetail(articleId, snapshot);
-        if (valuesRef.current === snapshot) setDirty(false);
+        await saveDetail(articleId, patch);
+        if (!Object.keys(pendingChangesRef.current).length) {
+          dirtyRef.current = false;
+          setDirty(false);
+        }
         if (!quiet) notify(story.generationIdentifier ? "Changes verified in the app and Google Sheet." : "Changes saved in the app.");
       } catch (error) {
+        pendingChangesRef.current = { ...patch, ...pendingChangesRef.current };
         dirtyRef.current = true;
         setDirty(true);
         notify(error instanceof Error ? error.message : "Couldn’t save article detail.", "error");
@@ -2029,10 +2056,18 @@ function Detail({
       // Stay on this record when the save could not be verified.
     }
   };
+  useEffect(() => () => {
+    if (autosaveTimerRef.current) window.clearTimeout(autosaveTimerRef.current);
+    const patch = pendingChangesRef.current;
+    pendingChangesRef.current = {};
+    if (Object.keys(patch).length) void saveDetail(story.id, patch);
+  }, [story.id]);
   const rerun = async () => { setBusy("analysis"); try { await reanalyze(); notify("Article analysis refreshed with a new version."); } catch (error) { notify(error instanceof Error ? error.message : "Couldn’t rerun analysis.", "error"); } finally { setBusy(""); } };
   const send = async () => {
     setBusy("sheet");
     try {
+      if (dirtyRef.current) await save(true);
+      else await saveQueueRef.current;
       const result = await sendForGeneration(story.id, values) as { warnings?: string[] };
       setPromptRepairRequired(false);
       setPromptReload((value) => value + 1);
@@ -2205,9 +2240,7 @@ function normalizeHashtags(value: string) {
   return Array.from(new Set(["#gsd-book", ...cleaned.filter((tag) => tag !== "#gsd-book"), "#focus", "#productivity"])).slice(0, 4);
 }
 function formatPanelContent(value: string) {
-  const firstPanel = value.search(/\bPanel\s*1\b/i);
-  const panelOnly = firstPanel >= 0 ? value.slice(firstPanel) : value;
-  return panelOnly
+  return value
     .replace(/\bHank\s*\(human\)/gi, "Hank")
     .replace(/(?:^|\n)\s*(?:Style|Voice)\s*:[\s\S]*?(?=\n\s*Panel\s+\d+\b|$)/gi, "")
     .replace(/\s+(?:Style|Voice)\s*:[\s\S]*$/gi, "")

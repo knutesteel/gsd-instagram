@@ -113,3 +113,13 @@ test("regenerated app content is detected before an older sheet version can over
     caption: concept.caption,
   }), false);
 });
+
+
+test("sheet polling preserves every app-owned Generation Suggestions field", () => {
+  const source = readFileSync(new URL("./sync-sheet-generation.js", import.meta.url), "utf8");
+  assert.match(source, /Generation Suggestions fields are app-owned/);
+  assert.doesNotMatch(source, /body: JSON\.stringify\(shared\.article\)/);
+  assert.match(source, /Sheet1!C\$\{rowNumber\}:I\$\{rowNumber\}/);
+  assert.match(source, /Sheet1!K\$\{rowNumber\}:L\$\{rowNumber\}/);
+  assert.match(source, /Generated image links were synchronized without changing app content/);
+});

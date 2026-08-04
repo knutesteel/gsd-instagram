@@ -63,7 +63,7 @@ export default async function handler(req, res) {
 
   try {
     const articleResponse = await fetch(
-      `${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,status,generation_identifier,post_concepts(id,image_summary)`,
+      `${supabaseUrl}/rest/v1/articles?id=eq.${encodeURIComponent(articleId)}&user_id=eq.${encodeURIComponent(user.id)}&select=id,status,generation_identifier,title,source_url,canonical_url,source,rank,post_concepts(id,summary,panel_count,post_type,image_summary,detailed_prompt,caption,hashtags)`,
       { headers },
     );
     if (!articleResponse.ok) throw new Error("Couldn’t load the article.");
@@ -71,17 +71,26 @@ export default async function handler(req, res) {
     const concept = Array.isArray(article?.post_concepts) ? article.post_concepts[0] : article?.post_concepts;
     if (!article || !concept) return res.status(404).json({ error: "Article not found." });
 
-    const hashtags = Array.isArray(values.hashtags) ? values.hashtags : [];
+    const has = (key) => Object.prototype.hasOwnProperty.call(values, key);
+    const imageSummary = { ...(concept.image_summary || {}) };
+    if (has("setting")) imageSummary.setting = values.setting;
+    if (has("content")) imageSummary.content = values.content;
     const proposed = {
-      article: { title: values.title, source_url: values.url, canonical_url: values.url, source: values.source, rank: values.score },
+      article: {
+        title: has("title") ? values.title : article.title,
+        source_url: has("url") ? values.url : article.source_url,
+        canonical_url: has("url") ? values.url : article.canonical_url,
+        source: has("source") ? values.source : article.source,
+        rank: has("score") ? values.score : article.rank,
+      },
       concept: {
-        summary: values.summary,
-        panel_count: values.panelCount,
-        post_type: values.postType,
-        image_summary: { ...(concept.image_summary || {}), setting: values.setting, content: values.content },
-        detailed_prompt: values.prompt,
-        caption: values.caption,
-        hashtags,
+        summary: has("summary") ? values.summary : concept.summary,
+        panel_count: has("panelCount") ? values.panelCount : concept.panel_count,
+        post_type: has("postType") ? values.postType : concept.post_type,
+        image_summary: imageSummary,
+        detailed_prompt: has("prompt") ? values.prompt : concept.detailed_prompt,
+        caption: has("caption") ? values.caption : concept.caption,
+        hashtags: has("hashtags") ? (Array.isArray(values.hashtags) ? values.hashtags : []) : (concept.hashtags || []),
       },
     };
 

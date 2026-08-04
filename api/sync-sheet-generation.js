@@ -433,30 +433,15 @@ export default async function handler(req, res) {
         rowChanged = true;
       }
 
-      // Reconcile every field shared by the spreadsheet and app before image
-      // downloads. The sheet is authoritative during a scheduled/manual pull;
-      // app saves use update-sheet-detail and write both stores immediately.
+      // Generation Suggestions fields are app-owned. Sheet polling may update
+      // workflow status and generated image links, but it must never rewrite
+      // title, URL, source, summary, type, panel count, content, caption, or
+      // hashtags. When either store differs, publish the current app values.
       const shared = sharedFieldsFromSheetRow(row);
-      const articleFieldsChanged = String(article.title || "") !== shared.article.title
+      const articleFieldsDiffer = String(article.title || "") !== shared.article.title
         || String(article.source_url || article.canonical_url || "") !== shared.article.source_url
         || String(article.source || "") !== shared.article.source;
-      if (articleFieldsChanged) {
-        const metadataUpdate = await fetch(`${supabaseUrl}/rest/v1/articles?id=eq.${article.id}&user_id=eq.${encodeURIComponent(user.id)}`, {
-          method: "PATCH",
-          headers: { ...headers, Prefer: "return=minimal" },
-          body: JSON.stringify(shared.article),
-        });
-        if (!metadataUpdate.ok) throw new Error(`Couldn’t synchronize article fields for #${identifier}.`);
-        if (!updatedArticleIds.includes(article.id)) updatedArticleIds.push(article.id);
-        rowChanged = true;
-      }
-
-      // Shared article metadata can still be imported from the sheet. The app
-      // is the source of truth for editorial concept content. Research and
-      // regeneration save to Supabase first; the ten-second sheet poll must
-      // never copy an older sheet version back over that newer app content.
-      // When the stores differ, publish the app version to the existing row.
-      if (appConceptDiffersFromSheet(concept, shared.concept)) {
+      if (articleFieldsDiffer || appConceptDiffersFromSheet(concept, shared.concept)) {
         const appShared = sharedSheetValuesFromApp({ article, concept });
         const sheetUpdate = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`, {
           method: "POST",
@@ -464,18 +449,23 @@ export default async function handler(req, res) {
           body: JSON.stringify({
             valueInputOption: "RAW",
             data: [
-              { range: `Sheet1!F${rowNumber}:I${rowNumber}`, majorDimension: "ROWS", values: [appShared.firstRange.slice(2)] },
+              { range: `Sheet1!C${rowNumber}:I${rowNumber}`, majorDimension: "ROWS", values: [[appShared.firstRange[0], identifier, ...appShared.firstRange.slice(1)]] },
               { range: `Sheet1!K${rowNumber}:L${rowNumber}`, majorDimension: "ROWS", values: [appShared.secondRange] },
+              { range: `Sheet1!R${rowNumber}`, majorDimension: "ROWS", values: [[appShared.source]] },
             ],
           }),
         });
-        if (!sheetUpdate.ok) throw new Error(`Couldn’t publish app content to the Google Sheet for #${identifier}.`);
+        if (!sheetUpdate.ok) throw new Error(`Couldn’t publish app-owned fields to the Google Sheet for #${identifier}.`);
+        row[2] = appShared.firstRange[0];
+        row[3] = identifier;
+        row[4] = appShared.firstRange[1];
         row[5] = appShared.firstRange[2];
         row[6] = appShared.firstRange[3];
         row[7] = appShared.firstRange[4];
         row[8] = appShared.firstRange[5];
         row[10] = appShared.secondRange[0];
         row[11] = appShared.secondRange[1];
+        row[17] = appShared.source;
         rowChanged = true;
       }
 
